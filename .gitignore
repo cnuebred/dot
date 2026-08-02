@@ -1,0 +1,11 @@
+/node_modules
+.env
+/tools
+/tmp
+/.faro
+/dist
+/tests
+.env.server
+
+bun.lock
+TEST_RELEASE_LOG.md

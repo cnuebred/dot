@@ -1,0 +1,29 @@
+{
+  "name": "dot",
+  "module": "index.ts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && vite build --config vite.embed.config.ts",
+    "preview": "vite preview",
+    "start": "bun src/backend/server.ts",
+    "frontend": "vite --host 0.0.0.0",
+    "backend": "bun src/backend/server.ts",
+    "start:all": "bun run backend & sleep 2 && bun run frontend",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "png-to-ico": "^3.0.2",
+    "sharp": "^0.35.3"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5"
+  },
+  "peerDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^26.1.2"
+  }
+}
