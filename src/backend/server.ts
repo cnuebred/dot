@@ -20,6 +20,9 @@ const PUBLIC_ORIGIN = process.env.PUBLIC_ORIGIN || `http://localhost:${PORT}`;
 // Built frontend (result of `bun run build` / vite build) served statically.
 const DIST_DIR = new URL('../../dist', import.meta.url).pathname;
 
+// SEO/public static files (robots.txt, sitemap.xml, manifest.txt) served directly.
+const SEO_DIR = new URL('../../seo', import.meta.url).pathname;
+
 const MIME_TYPES: Record<string, string> = {
   html: 'text/html',
   css: 'text/css',
@@ -28,6 +31,8 @@ const MIME_TYPES: Record<string, string> = {
   png: 'image/png',
   ico: 'image/x-icon',
   json: 'application/json',
+  txt: 'text/plain; charset=utf-8',
+  xml: 'application/xml; charset=utf-8',
 };
 
 const PAYLOAD_CHAR_REGEX = /^[A-Za-z0-9_-]{1,512}$/;
@@ -806,6 +811,21 @@ Bun.serve({
       }
 
       return jsonResponse({ error: 'Method Not Allowed' }, 405);
+    }
+
+    // --- Routing: /robots.txt, /sitemap.xml, /manifest.txt (public SEO files) ---
+    if (path === '/robots.txt' || path === '/sitemap.xml' || path === '/manifest.txt') {
+      const fileName = path.slice(1); // e.g. "robots.txt"
+      const seoFile = Bun.file(`${SEO_DIR}/${fileName}`);
+      if (await seoFile.exists()) {
+        const ext = fileName.split('.').pop() ?? '';
+        const headers: Record<string, string> = {
+          'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
+          'Cache-Control': 'public, max-age=3600',
+          ...getPageSecurityHeaders(),
+        };
+        return new Response(seoFile, { headers });
+      }
     }
 
     // --- Serwowanie zbudowanych statycznych plików frontendu (dist/) ---

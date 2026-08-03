@@ -1,0 +1,54 @@
+# dot.qrware.pl — Manifest
+
+## Why this app exists
+
+**dot** is a minimalist SVG icon generator built around a single, radical idea:
+*an icon should live entirely inside its URL.*
+
+Most icon editors force you to create an account, sign in, and store your work
+in their database. You end up locked into their platform, their servers, their
+downtime, and their data policies.
+
+**dot is the opposite of that.**
+
+### The core principle: stateless, self-contained, permanent
+
+Draw on a 16x16 grid, and the app compresses your icon into a short Base64URL
+payload. That payload IS the icon — it carries the complete drawing in the URL
+itself. There is:
+
+- **No account.** Nothing to sign up for, nothing to remember.
+- **No database.** No server-side state holding your work hostage.
+- **No lock-in.** The URL you create today works forever, on any machine, with
+  no dependency on dot's servers staying up.
+
+A single line like `/r/eJwrM7Uy...` is a complete, hotlinkable, shareable icon.
+Embed it in an `<img>` tag, drop it in a Discord message, use it as a favicon,
+or bookmark it — it just works, everywhere, forever.
+
+### Why that matters
+
+Software keeps moving toward centralization and rent-seeking. Every icon you
+draw "in the cloud" is a tiny piece of your freedom stored on someone else's
+disk. dot pushes back: **your creative output should be yours, encoded in a
+portable string you control, not a row in a database you don't.**
+
+It is fast (SVG compiled in <1ms), tiny (no framework bloat), and honest — a
+single Bun process, zero dependencies on your side.
+
+### What you can do
+
+- **Create** pixel-perfect icons on a 16x16 grid with line, arc, shapes and fills.
+- **Share** them as permanent hotlinks that need no server round-trip to exist.
+- **Embed** them anywhere via a tiny web component or a plain `<img>`.
+- **Export** to SVG, PNG, WebP, and ICO (favicon).
+
+Because the icon is in the URL, "the cloud" is just a relay — the real copy
+lives in your link, and in your hands.
+
+---
+
+*dot is a statement: your icons belong to you. Keep them simple, keep them
+portable, keep them yours.*
+
+Pozdrawiam

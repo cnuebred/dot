@@ -1,0 +1,15 @@
+User-agent: *
+Allow: /
+
+# Icon rendering endpoints are public and hotlinkable – allow crawling
+Allow: /r/
+Allow: /i/
+Allow: /p/
+
+# Static link "edit" pages are private per-owner – keep out of index
+Disallow: /o/
+
+# API endpoints are not meant for search engines
+Disallow: /api/
+
+Sitemap: https://dot.qrware.pl/sitemap.xml
