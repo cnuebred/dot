@@ -12,8 +12,8 @@ export function getGridPos(offsetX: number, offsetY: number, containerWidth: num
   const y = Math.round((offsetY - drawAreaOffset) / cellSize);
   
   return {
-    x: Math.max(0, Math.min(15, x)),
-    y: Math.max(0, Math.min(15, y))
+    x: Math.max(0, Math.min(16, x)),
+    y: Math.max(0, Math.min(16, y))
   };
 }
 

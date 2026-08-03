@@ -117,12 +117,12 @@ body {
     touch-action: none;
     /* blokuje scroll/zoom strony podczas rysowania dotykiem */
     /* Padding 11% – wyśrodkowuje siatkę 16×16 wewnątrz pola, obszar roboczy 78% */
-    padding: 11%;
+    padding: 13%;
 }
 
 .main-preview {
     position: absolute;
-    inset: 11%;
+    inset: 13%;
     width: 78%;
     height: 78%;
     pointer-events: none;
@@ -130,7 +130,7 @@ body {
 
 .draft-preview {
     position: absolute;
-    inset: 11%;
+    inset: 13%;
     width: 78%;
     height: 78%;
     pointer-events: none;

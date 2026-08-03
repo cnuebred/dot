@@ -100,6 +100,8 @@ export class GridCanvas {
     this.canvasElement.addEventListener('mousedown', (e: MouseEvent) => {
       const rect = this.canvasElement.getBoundingClientRect();
       const pos = getGridPos(e.clientX - rect.left, e.clientY - rect.top, this.canvasElement.clientWidth);
+      if(pos.x < 0 || pos.y < 0) return;
+      if(pos.x >= 16 || pos.y >= 16) return;
 
       if (stateManager.currentTool === 'm') {
         // Move mode – select figure under cursor
@@ -128,6 +130,8 @@ export class GridCanvas {
     this.canvasElement.addEventListener('mousemove', (e: MouseEvent) => {
       const rect = this.canvasElement.getBoundingClientRect();
       const pos = getGridPos(e.clientX - rect.left, e.clientY - rect.top, this.canvasElement.clientWidth);
+      if(pos.x < 0 || pos.y < 0) return;
+      if(pos.x >= 16 || pos.y >= 16) return;
 
       if (this.isMoving) {
         stateManager.moveSelectedBy(pos.x, pos.y);
