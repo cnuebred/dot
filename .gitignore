@@ -9,3 +9,8 @@
 
 bun.lock
 TEST_RELEASE_LOG.md
+
+# Local SQLite database (created at runtime from .env DOT_DB_PATH)
+data/*.db
+data/*.db-shm
+data/*.db-wal
