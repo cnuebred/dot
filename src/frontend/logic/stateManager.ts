@@ -57,6 +57,7 @@ class StateManager {
   public currentTool: ToolBase = 'l';
   public fillEnabled = false;
   public currentColor = 0;
+  public currentPalette = 0;
   public currentWeight = 0;
   public currentOpacity = 15;
   public currentRotation = 0;
@@ -151,6 +152,11 @@ class StateManager {
   setColor(colorIndex: number) {
     this.currentColor = colorIndex;
     this.emit('colorChanged', colorIndex);
+  }
+
+  setPalette(paletteId: number) {
+    this.currentPalette = paletteId;
+    this.emit('paletteChanged', paletteId);
   }
 
   setWeight(weight: number) {

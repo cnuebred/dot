@@ -1,4 +1,4 @@
-import { getColorByIndex } from '../shared/palette';
+import { getColorByIndex, getPaletteId, getColorIndex } from '../shared/palette';
 
 export interface CompileOptions {
   /** Gdy ustawione, dodaje nieprzezroczyste tło (przydatne dla faviconów w niektórych przeglądarkach). */

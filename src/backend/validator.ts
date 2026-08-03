@@ -1,4 +1,4 @@
-import { MAX_COLOR_INDEX } from '../shared/palette';
+import { MAX_COLOR_INDEX, COLOR_INDEX_MASK } from '../shared/palette';
 
 export interface ValidationResult {
   isValid: boolean;
