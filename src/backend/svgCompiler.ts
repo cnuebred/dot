@@ -1,4 +1,5 @@
 import { getColorByIndex, getPaletteId, getColorIndex } from '../shared/palette';
+import { getLineCap, hasArrowhead, arrowheadPoints, strokeWidth } from '../shared/toolEndings';
 
 export interface CompileOptions {
   /** Gdy ustawione, dodaje nieprzezroczyste tło (przydatne dla faviconów w niektórych przeglądarkach). */
@@ -15,7 +16,12 @@ export interface CompileOptions {
  * Lowercase tool letter = stroke, uppercase = fill (line is always stroke).
  * [C1][C2] is color index (00-3f) from the 64-color palette shared by front/backend.
  * [W] is line weight (0-f), mapped to stroke-width 0.2–3.2.
- * ViewBox: 0 0 16 16
+ * ViewBox: 0 0 15 15
+ *
+ * Why 15×15: the figures/grid dots live on integer coordinates 0–15 (16 points).
+ * A viewBox of "0 0 15 15" maps that 0–15 range exactly onto the viewport, so the
+ * 16 points span edge-to-edge and the drawing is perfectly centered. A "0 0 16 16"
+ * box would leave an extra 1/16 margin on the right/bottom, shifting content off-center.
  */
 export function compileToSvg(text: string, options: CompileOptions = {}): string {
   const BLOCK_V3 = 8;
@@ -27,9 +33,10 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
   const isV4 = blockLen === BLOCK_V4;
   const isV5 = blockLen === BLOCK_V5;
 
-  // 16×16 grid – padding provided by CSS (12.5% on .grid-canvas).
+  // 16×16 grid – coordinates 0-15. ViewBox is 15×15 so the 0-15 range fills the
+  // whole viewport (16 points edge-to-edge, perfectly centered).
   const additionalPadding = 0;
-  const sizeWithPadding = 16;
+  const sizeWithPadding = 15;
 
   interface ShapePart {
     zIndex: number;
@@ -62,12 +69,17 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
     const color = getColorByIndex(colorIndex);
     const stroke = isFilled ? 'none' : color;
     const fill = isFilled ? color : 'none';
-    const strokeWidth = (0.2 + weight * 0.2).toFixed(1);
+    const sw = strokeWidth(weight);
+    const strokeWidthStr = sw.toFixed(1);
+    const lineCap = getLineCap(type);
 
     let d = '';
 
     switch (type.toLowerCase()) {
-      case 'l': // Line: from (x1,y1) to (x2,y2)
+      case 'l': // Line (round) from (x1,y1) to (x2,y2)
+      case 's': // Line (square cap)
+      case 'b': // Line (butt cap)
+      case 'v': // Line (arrowhead)
         d = `M ${x1} ${y1} L ${x2} ${y2}`;
         break;
       case 'r': // Rectangle: opposite corners (x1,y1) and (x2,y2)
@@ -85,11 +97,13 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
         d = `M ${x1} ${y1} L ${x2} ${y2} L ${x3} ${y2} Z`;
         break;
       }
-      case 'a': { // Arc from (x1,y1) to (x2,y2)
+      case 'a': // Arc (round) from (x1,y1) to (x2,y2)
+      case 'k': // Arc (square cap)
+      case 'n': // Arc (butt cap)
+      case 'z': // Arc (arrowhead)
         const r = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1), 1);
         d = `M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`;
         break;
-      }
     }
 
     // v4 attributes: opacity + rotation
@@ -102,13 +116,26 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
       extraAttrs.push(`transform="rotate(${rotation} ${cx} ${cy})"`);
     }
     const extra = extraAttrs.length > 0 ? ' ' + extraAttrs.join(' ') : '';
+    const rotationAttr = isV4 && rotation !== 0
+      ? ` transform="rotate(${rotation} ${(x1 + x2) / 2} ${(y1 + y2) / 2})"`
+      : '';
+
+    // Arrowhead overlay (if the tool is an arrowhead variant).
+    let arrowXml = '';
+    if (hasArrowhead(type)) {
+      const pts = arrowheadPoints(type, x1, y1, x2, y2, sw);
+      if (pts) {
+        arrowXml = `<polygon points="${pts}" fill="${color}" stroke="none"${rotationAttr} />`;
+      }
+    }
 
     const isKnockout = isV4 && opacity === 0;
 
     parts.push({
       zIndex,
       isKnockout,
-      xml: `<path d="${d}" stroke="${stroke}" fill="${fill}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"${extra} />`,
+      xml: `<path d="${d}" stroke="${stroke}" fill="${fill}" stroke-width="${strokeWidthStr}" stroke-linecap="${lineCap}" stroke-linejoin="round"${extra} />` +
+        (arrowXml ? arrowXml : ''),
     });
   }
 

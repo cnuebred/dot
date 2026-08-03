@@ -74,11 +74,72 @@ The backend automatically serves the built frontend from the `dist/` directory �
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `3250` | HTTP server port |
+| `PUBLIC_ORIGIN` | `http://localhost:3250` | Public base URL used for absolute links (`/p/...`, `/o/...`) |
+| `TRUSTED_PROXIES` | _(empty)_ | Comma-separated IPs/CIDRs from which `X-Forwarded-For` is trusted |
+
+**Multi-machine / shared state:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `REDIS_URL` | _(empty)_ | Enables **global rate-limiting** (across all instances) and a **shared render cache** tier |
+| `VALKEY_URL` | `REDIS_URL` | Alias for Valkey |
+| `DOT_DB_PATH` | _(empty)_ | Path to a SQLite DB for **process-safe** gallery + static links (falls back to JSON files if unset) |
+
+**Monetization / API keys:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `DOT_API_KEYS` | _(empty)_ | Comma-separated paid API keys (accepted via `Authorization: Bearer <key>`) |
+| `DOT_BATCH_PAID_LIMIT` | `1000` | `/api/batch` requests/min for paid keys |
+| `DOT_BATCH_FREE_LIMIT` | `30` | `/api/batch` requests/min for anonymous |
+| `DOT_LINKS_FREE_QUOTA` | `5` | Static links/day for anonymous; paid keys are unlimited |
+
+**CDN note:** routes `/r/*`, `/favicon/*` return `Cache-Control: immutable` + a strong `ETag` and are safe to put entirely behind a CDN/nginx cache — no shared state is needed for pure icon rendering.
 
 ```bash
 PORT=8080 bun start
 ```
 
+### Operations — Redis & SQLite
+
+The app scales from a single process (default, zero setup) to multi-process /
+multi-machine by enabling two optional stores. All are **opt-in** via env vars.
+
+**1. SQLite (`DOT_DB_PATH`)** — makes gallery + static links process-safe
+(avoids the JSON-file + in-memory-cache race across processes):
+
+```bash
+# migrate existing JSON data once (idempotent)
+DOT_DB_PATH=/var/www/dot/dot.db ./tools/migrate_json_to_sqlite.sh
+
+DOT_DB_PATH=/var/www/dot/dot.db bun start
+```
+
+**2. Redis (`REDIS_URL`)** — global rate-limiting + shared render cache across
+all instances. Postaw Redis lokalnie na serwerze:
+
+```bash
+# Arch/Manjaro, Debian/Ubuntu, RHEL/Fedora – instaluje, konfiguruje (AOF+hasło),
+# startuje i wypisuje REDIS_URL do wstawienia w .env:
+sudo ./tools/setup_redis.sh
+
+# zweryfikuj:
+redis-cli -a '<hasło z setup>' ping   # → PONG
+
+REDIS_URL=redis://:<hasło>@127.0.0.1:6379 bun start
+```
+
+> ⚠️ `setup_redis.sh` binduje Redis do `127.0.0.1` i chroni go hasłem — nie
+> wystawiaj go publicznie bez TLS/SSH-tunelu.
+
+**Health & metrics:** `/api/health` i `/api/metrics` raportują, czy `redis` /
+`sqlite` są aktywne (pola `features`).
+
+**Recepta skalowania:**
+- 1 proces / mały ruch → nic nie trzeba (pliki JSON, in-memory cache).
+- 1 maszyna, wiele procesów → `DOT_DB_PATH` (SQLite) + `REDIS_URL`.
+- wiele maszyn → `REDIS_URL` (rate-limit + cache) + SQLite na wspólnym FS,
+  najlepiej docelowo Postgres (interfejs `RateLimitStore` jest gotowy do podmiany).
 ---
 
 ## 🏗️ Architecture

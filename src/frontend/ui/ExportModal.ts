@@ -1,5 +1,30 @@
 import { stateManager } from '../logic/stateManager';
 import { encodeState, encodeStateRaw } from '../logic/encoder';
+import { encodeCommittedState } from '../logic/encodeMemo';
+
+/** Copies text to clipboard with a graceful fallback for non-secure contexts. */
+async function copyText(text: string): Promise<void> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    throw new Error('clipboard unavailable');
+  } catch {
+    // Fallback: hidden textarea + execCommand (works on http/non-secure).
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+    } finally {
+      document.body.removeChild(ta);
+    }
+  }
+}
 
 export class ExportModal {
   render(): HTMLElement {
@@ -15,7 +40,7 @@ export class ExportModal {
     const title = document.createElement('h2');
     title.textContent = 'Export Icon';
 
-    const payload = encodeState(stateManager.committedFigures);
+    const payload = encodeCommittedState();
     const rawPayload = encodeStateRaw(stateManager.committedFigures);
     const url = payload ? `${window.location.origin}/r/${payload}` : '';
     const rawUrl = rawPayload ? `${window.location.origin}/raw/${rawPayload}` : '';
@@ -63,7 +88,7 @@ export class ExportModal {
     copyUrlBtn.className = 'btn-primary';
     copyUrlBtn.textContent = 'Copy Hotlink';
     copyUrlBtn.onclick = () => {
-      navigator.clipboard.writeText(hotlinkInput.value);
+      copyText(hotlinkInput.value);
       copyUrlBtn.textContent = 'Copied!';
       setTimeout(() => (copyUrlBtn.textContent = 'Copy Hotlink'), 2000);
     };
@@ -74,7 +99,7 @@ export class ExportModal {
     copySvgBtn.onclick = async () => {
       const res = await fetch(url);
       const svgText = await res.text();
-      await navigator.clipboard.writeText(svgText);
+      await copyText(svgText);
       copySvgBtn.textContent = 'Copied!';
       setTimeout(() => (copySvgBtn.textContent = 'Copy SVG Code'), 2000);
     };
@@ -93,13 +118,28 @@ export class ExportModal {
       URL.revokeObjectURL(objectUrl);
     };
 
+    const downloadPngBtn = document.createElement('button');
+    downloadPngBtn.className = 'btn-primary';
+    downloadPngBtn.textContent = 'Download PNG';
+    downloadPngBtn.onclick = async () => {
+      const pngUrl = `${url}?format=png`;
+      const res = await fetch(pngUrl);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = 'icon.png';
+      a.click();
+      URL.revokeObjectURL(objectUrl);
+    };
+
     const copyFaviconSvgBtn = document.createElement('button');
     copyFaviconSvgBtn.className = 'btn-primary';
     copyFaviconSvgBtn.textContent = 'Copy <link> Tag for SVG Favicon';
     copyFaviconSvgBtn.onclick = () => {
       const faviconSvgUrl = payload ? `${window.location.origin}/r/${payload}?favicon=1` : '';
       const tag = `<link rel="icon" type="image/svg+xml" href="${faviconSvgUrl}">`;
-      navigator.clipboard.writeText(tag);
+      copyText(tag);
       copyFaviconSvgBtn.textContent = 'Copied!';
       setTimeout(() => (copyFaviconSvgBtn.textContent = 'Copy <link> Tag for SVG Favicon'), 2000);
     };
@@ -108,7 +148,7 @@ export class ExportModal {
     copyFaviconIcoBtn.className = 'btn-primary';
     copyFaviconIcoBtn.textContent = 'Copy Favicon ICO URL';
     copyFaviconIcoBtn.onclick = () => {
-      navigator.clipboard.writeText(faviconUrl);
+      copyText(faviconUrl);
       copyFaviconIcoBtn.textContent = 'Copied!';
       setTimeout(() => (copyFaviconIcoBtn.textContent = 'Copy Favicon ICO URL'), 2000);
     };
@@ -137,7 +177,7 @@ export class ExportModal {
     copyRawBtn.style.fontSize = '0.8rem';
     copyRawBtn.style.padding = '0.35rem 0.75rem';
     copyRawBtn.onclick = () => {
-      navigator.clipboard.writeText(rawInput.value);
+      copyText(rawInput.value);
       copyRawBtn.textContent = 'Copied!';
       setTimeout(() => (copyRawBtn.textContent = 'Copy RAW Link'), 2000);
     };
@@ -167,7 +207,7 @@ export class ExportModal {
       setTimeout(() => (publishBtn.textContent = 'Publish to Gallery'), 3000);
     };
 
-    actions.append(copyUrlBtn, copySvgBtn, downloadBtn, copyFaviconSvgBtn, copyFaviconIcoBtn, publishBtn, rawSection);
+    actions.append(copyUrlBtn, copySvgBtn, downloadBtn, downloadPngBtn, copyFaviconSvgBtn, copyFaviconIcoBtn, publishBtn, rawSection);
 
     const closeBtn = document.createElement('button');
     closeBtn.className = 'btn-delete';

@@ -17,7 +17,10 @@ export class EditorView {
     const leftPanel = document.createElement('div');
     leftPanel.className = 'panel';
     leftPanel.id = 'left-panel';
-    leftPanel.appendChild(new Toolbar().render());
+
+    const toolbar = new Toolbar();
+    leftPanel.appendChild(toolbar.render());
+    const toolbarCleanup = toolbar.attach();
 
     // Przycisk toggle dla lewego panelu (widoczny tylko na mobile)
     const leftToggle = document.createElement('button');
@@ -32,7 +35,8 @@ export class EditorView {
     // Środek: Canvas
     const canvasArea = document.createElement('div');
     canvasArea.className = 'canvas-container';
-    canvasArea.appendChild(new GridCanvas().render());
+    const gridCanvas = new GridCanvas();
+    canvasArea.appendChild(gridCanvas.render());
 
     // Prawy Panel: Warstwy
     const rightPanel = document.createElement('div');
@@ -40,7 +44,9 @@ export class EditorView {
     rightPanel.id = 'right-panel';
     rightPanel.style.height = '100%';
     rightPanel.style.overflowY = 'auto';
-    rightPanel.appendChild(new LayerPanel().render());
+    const layerPanel = new LayerPanel();
+    rightPanel.appendChild(layerPanel.render());
+    const layerCleanup = layerPanel.attach();
 
     // Przycisk toggle dla prawego panelu (widoczny tylko na mobile)
     const rightToggle = document.createElement('button');
@@ -55,7 +61,12 @@ export class EditorView {
     container.append(leftPanel, leftToggle, canvasArea, rightToggle, rightPanel);
 
     const unbindShortcuts = initKeyboardShortcuts();
-    container.__destroy = unbindShortcuts;
+    container.__destroy = () => {
+      unbindShortcuts();
+      gridCanvas.destroy();
+      toolbarCleanup();
+      layerCleanup();
+    };
 
     return container;
   }

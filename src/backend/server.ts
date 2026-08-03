@@ -6,6 +6,9 @@ import { validatePayload } from './validator';
 import { getPageSecurityHeaders, getAssetSecurityHeaders, getApiSecurityHeaders } from './security';
 import { rateLimiter, getClientIp } from './rateLimiter';
 import { renderCache, RenderCache } from './renderCache';
+import { tryRedisGet, redisSet, redisCacheEnabled } from './redisCache';
+import { resolveTier, batchLimits, staticLinkQuota } from './apiKeys';
+import { sqliteEnabled } from './sqliteStore';
 import { listGalleryEntries, addGalleryEntry } from './gallery';
 import { createStaticLink, getLinkByPublicId, getLinkByOwnerId, updateStaticLink } from './staticLinks';
 import sharp from 'sharp';
@@ -67,6 +70,25 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+// Max JSON body size for POST/PUT endpoints (defense against memory DoS).
+const MAX_JSON_BODY_BYTES = 256 * 1024; // 256 KB
+
+/**
+ * Reads and parses a JSON request body with a hard size limit.
+ * Returns null on invalid JSON, oversized body, or a non-JSON content type.
+ */
+async function readJsonBody<T = any>(req: Request): Promise<T | null> {
+  const length = Number(req.headers.get('content-length') ?? 0);
+  if (length > MAX_JSON_BODY_BYTES) return null;
+  try {
+    const text = await req.text();
+    if (text.length > MAX_JSON_BODY_BYTES) return null;
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
 /** Compiles payload (Base64URL) to SVG, returns null if data is invalid. */
 function renderIcon(payload: string, faviconBackground?: string, isPreview?: boolean): string | null {
   const result = validateAndDecodePayload(payload);
@@ -89,6 +111,9 @@ function escapeHtml(value: string): string {
 
 Bun.serve({
   port: PORT,
+  // Defense-in-depth: hard cap on request body size (backed by readJsonBody's
+  // 256 KB check on JSON endpoints). Returns 413 automatically.
+  maxRequestBodySize: 512 * 1024,
   async fetch(req, server) {
     const url = new URL(req.url);
     const path = url.pathname;
@@ -109,7 +134,12 @@ Bun.serve({
 
       // Check cache (key: payload + faviconBg, format=ico)
       const cacheKey = RenderCache.buildKey(payload, 'ico', faviconBg);
-      const cached = renderCache.get(cacheKey);
+      let cached = renderCache.get(cacheKey);
+      // Local miss → try shared Redis tier (multi-machine).
+      if (!cached) {
+        await tryRedisGet(renderCache, cacheKey);
+        cached = renderCache.get(cacheKey);
+      }
       if (cached?.icoBuffer) {
         return new Response(cached.icoBuffer as unknown as BodyInit, {
           headers: {
@@ -149,6 +179,7 @@ Bun.serve({
 
         // Save to cache
         renderCache.set(cacheKey, { svg, icoBuffer, createdAt: Date.now() });
+        await redisSet(renderCache, cacheKey);
 
         return new Response(icoBuffer as unknown as BodyInit, {
           headers: {
@@ -184,8 +215,38 @@ Bun.serve({
         (url.searchParams.has('webp') ? 'webp' : 'svg')
       ).toLowerCase();
 
+      // Bitmap conversion (png/webp/ico via sharp) is far more CPU-heavy than
+      // pure SVG. Apply a stricter, separate rate limit so a burst of bitmap
+      // requests can't exhaust CPU even though the SVG limit is generous.
+      const isBitmap = format === 'png' || format === 'webp' || faviconMode;
+      if (isBitmap) {
+        const bitmapRate = await rateLimiter.check(`img-bitmap:${ip}`, { limit: 60, windowMs: 60_000 });
+        if (bitmapRate.limited) {
+          metrics.rateLimited++;
+          return new Response('Too Many Requests', { status: 429, headers: getApiSecurityHeaders() });
+        }
+      }
+
       const cacheKey = RenderCache.buildKey(payload, format, faviconBg, previewMode);
-      const cached = renderCache.get(cacheKey);
+
+      // Strong ETag derived from the render-determining parameters.
+      const etag = `"${cacheKey}"`;
+
+      // 304 Not Modified – let clients revalidate without re-rendering.
+      if (req.headers.get('if-none-match') === etag) {
+        return new Response(null, {
+          status: 304,
+          headers: { ETag: etag, ...getAssetSecurityHeaders() },
+        });
+      }
+
+      let cached = renderCache.get(cacheKey);
+
+      // Local miss → try the shared Redis tier (multi-machine).
+      if (!cached) {
+        await tryRedisGet(renderCache, cacheKey);
+        cached = renderCache.get(cacheKey);
+      }
 
       if (cached) {
         // Cache hit – return cached result
@@ -207,6 +268,7 @@ Bun.serve({
           headers: {
             'Content-Type': contentType,
             'Cache-Control': 'public, max-age=31536000, immutable',
+            ETag: etag,
             ...getAssetSecurityHeaders(),
           },
         });
@@ -248,6 +310,7 @@ Bun.serve({
         }
 
         renderCache.set(cacheKey, cacheEntry);
+        await redisSet(renderCache, cacheKey);
 
         const elapsed = Date.now() - startTime;
         recordRenderTime(elapsed);
@@ -256,6 +319,7 @@ Bun.serve({
           headers: {
             'Content-Type': contentType,
             'Cache-Control': 'public, max-age=31536000, immutable',
+            ETag: etag,
             ...getAssetSecurityHeaders(),
           },
         });
@@ -506,14 +570,23 @@ Bun.serve({
     // --- Routing: /api/batch (batch rendering wielu ikon) ---
     if (path === '/api/batch' && req.method === 'POST') {
       metrics.requests++;
-      const rate = await rateLimiter.check(`batch:${ip}`, { limit: 30, windowMs: 60_000 });
+
+      // Tier-based API access: anonymous (free, IP-limited) vs. paid API keys.
+      const tier = resolveTier(req.headers.get('authorization'));
+      const limits = batchLimits(tier);
+      // Key rate-limit buckets are per-key for paid; per-IP for free.
+      const keyForLimit = tier === 'paid'
+        ? `batch:key:${req.headers.get('authorization')!.replace(/^Bearer\s+/i, '')}`
+        : `batch:${ip}`;
+      const rate = await rateLimiter.check(keyForLimit, limits);
       if (rate.limited) {
         metrics.rateLimited++;
         return jsonResponse({ error: 'Too many requests' }, 429);
       }
 
       try {
-        const body = await req.json();
+        const body = await readJsonBody(req);
+        if (!body) return jsonResponse({ error: 'Invalid or oversized JSON body' }, 400);
         const payloads: string[] = body?.payloads;
         const format: string = (body?.format || 'svg').toLowerCase();
 
@@ -529,11 +602,14 @@ Bun.serve({
 
         const startTime = Date.now();
 
-        // Renderuj wszystkie payloady równolegle (z limitem 5 współbieżnych)
         const CONCURRENCY = 5;
         const results: { payload: string; ok: boolean; data?: string; error?: string }[] = new Array(payloads.length);
 
         async function renderOne(payload: string, index: number): Promise<void> {
+          if (typeof payload !== 'string' || payload.length === 0 || payload.length > 512) {
+            results[index] = { payload, ok: false, error: 'Invalid payload' };
+            return;
+          }
           const svg = renderIcon(payload);
           if (!svg) {
             results[index] = { payload, ok: false, error: 'Invalid payload' };
@@ -584,6 +660,10 @@ Bun.serve({
         status: 'ok',
         uptime: Math.floor((Date.now() - serverStartTime) / 1000),
         version: FORMAT_VERSION,
+        features: {
+          redis: redisCacheEnabled,
+          sqlite: sqliteEnabled,
+        },
       });
     }
 
@@ -601,6 +681,10 @@ Bun.serve({
         avgRenderMs,
         renderCount: metrics.renderCount,
         cache: renderCache.getStats(),
+        features: {
+          redis: redisCacheEnabled,
+          sqlite: sqliteEnabled,
+        },
       });
     }
 
@@ -630,8 +714,24 @@ Bun.serve({
         const rate = await rateLimiter.check(`links-create:${ip}`, { limit: 20, windowMs: 60_000 });
         if (rate.limited) { metrics.rateLimited++; return jsonResponse({ error: 'Too many requests' }, 429); }
 
+        // Freemium: free users get a limited number of static links per day.
+        const tier = resolveTier(req.headers.get('authorization'));
+        const quota = staticLinkQuota(tier);
+        if (quota !== null) {
+          const dailyKey = `links-daily:${ip}:${Math.floor(Date.now() / 86_400_000)}`;
+          const created = await rateLimiter.check(dailyKey, { limit: quota, windowMs: 86_400_000 });
+          if (created.limited) {
+            metrics.rateLimited++;
+            return jsonResponse({
+              error: 'Free plan allows only ' + quota + ' static links per day. Upgrade for unlimited links.',
+              upgrade: true,
+            }, 429);
+          }
+        }
+
         try {
-          const body = await req.json();
+          const body = await readJsonBody(req);
+          if (!body) return jsonResponse({ error: 'Invalid or oversized JSON body' }, 400);
           const result = await createStaticLink(body?.payload, body?.title);
           if (!result.success) return jsonResponse({ error: result.error }, 400);
           return jsonResponse({
@@ -658,7 +758,8 @@ Bun.serve({
         if (rate.limited) { metrics.rateLimited++; return jsonResponse({ error: 'Too many requests' }, 429); }
 
         try {
-          const body = await req.json();
+          const body = await readJsonBody(req);
+          if (!body) return jsonResponse({ error: 'Invalid or oversized JSON body' }, 400);
           const result = await updateStaticLink(body?.ownerId, body?.payload, body?.title);
           if (!result.success) return jsonResponse({ error: result.error }, 400);
           return jsonResponse({ entry: result.entry });
@@ -687,7 +788,8 @@ Bun.serve({
         if (rate.limited) { metrics.rateLimited++; return jsonResponse({ error: 'Too many requests' }, 429); }
 
         try {
-          const body = await req.json();
+          const body = await readJsonBody(req);
+          if (!body) return jsonResponse({ error: 'Invalid or oversized JSON body' }, 400);
           const result = await addGalleryEntry(body?.payload, body?.title);
           if (!result.success) return jsonResponse({ error: result.error }, 400);
           return jsonResponse({ entry: result.entry }, 201);
@@ -712,12 +814,17 @@ Bun.serve({
 
     if (await file.exists()) {
       const ext = staticFilePath.split('.').pop() ?? '';
-      return new Response(file, {
-        headers: {
-          'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
-          ...getPageSecurityHeaders(),
-        },
-      });
+      const mime = MIME_TYPES[ext] || 'application/octet-stream';
+      const headers: Record<string, string> = {
+        'Content-Type': mime,
+        ...getPageSecurityHeaders(),
+      };
+      // Vite hashed assets (index-*.js/css) are immutable; HTML is not cached.
+      const isHashedAsset = /[a-f0-9]{8}\.(js|css|svg|png|ico)$/.test(staticFilePath);
+      headers['Cache-Control'] = isHashedAsset
+        ? 'public, max-age=31536000, immutable'
+        : 'no-cache';
+      return new Response(file, { headers });
     }
 
     return new Response('Not Found', { status: 404, headers: getPageSecurityHeaders() });

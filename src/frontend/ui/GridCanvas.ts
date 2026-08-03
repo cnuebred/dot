@@ -1,33 +1,42 @@
 import { stateManager } from '../logic/stateManager';
 import type { Figure, DraftState } from '../logic/stateManager';
 import { getGridPos } from '../logic/math';
-import { encodeState } from '../logic/encoder';
 import { getColorByIndex } from '../../shared/palette';
+import { buildPath, rotationTransform } from '../logic/pathBuilder';
+import { renderCommittedSvg } from '../logic/committedRenderer';
+import { getLineCap, hasArrowhead, arrowheadPoints, strokeWidth } from '../../shared/toolEndings';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 export class GridCanvas {
   private canvasElement: HTMLElement;
-  private mainImg: HTMLImageElement;
+  private committedSvg: SVGSVGElement;
   private previewSvg: SVGSVGElement;
   private previewPath: SVGPathElement;
   private highlightPath: SVGPathElement;
+  private drawGroup: SVGGElement;
+  private arrowPath: SVGPolygonElement | null = null;
   private isDrawing = false;
   private isMoving = false;
+  private unsubs: Array<() => void> = [];
+  private highlightTimer: number | null = null;
+  private windowMouseup: (() => void) | null = null;
 
   constructor() {
     this.canvasElement = document.createElement('div');
     this.canvasElement.className = 'grid-canvas';
 
-    // Main image fetched from backend (committed figures)
-    this.mainImg = document.createElement('img');
-    this.mainImg.className = 'main-preview';
-    this.mainImg.alt = 'Icon preview';
+    // Inline SVG of committed figures – rendered client-side (no network round-trip).
+    // viewBox 15×15 maps the 0-15 coordinate range edge-to-edge and centers it.
+    this.committedSvg = document.createElementNS(SVG_NS, 'svg') as SVGSVGElement;
+    this.committedSvg.setAttribute('viewBox', '0 0 15 15');
+    this.committedSvg.classList.add('committed-preview');
+    this.committedSvg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
 
     // SVG overlay for live draft preview (uncompressed, 60 FPS)
     this.previewSvg = document.createElementNS(SVG_NS, 'svg') as SVGSVGElement;
-    // viewBox 0 0 16 16 – padding provided by CSS (12.5% on .grid-canvas)
-    this.previewSvg.setAttribute('viewBox', '0 0 16 16');
+    // viewBox 0 0 15 15 – the 0-15 range fills the viewport, so the grid is centered.
+    this.previewSvg.setAttribute('viewBox', '0 0 15 15');
     this.previewSvg.classList.add('draft-preview');
     this.previewSvg.setAttribute('color', '#666');
 
@@ -57,27 +66,32 @@ export class GridCanvas {
     this.previewSvg.appendChild(defs);
 
     // Drawing group – coordinates 0–15 mapped directly to viewBox 16×16.
-    const drawGroup = document.createElementNS(SVG_NS, 'g');
+    this.drawGroup = document.createElementNS(SVG_NS, 'g');
 
     // Grid dots – suggested drawing points (16×16 = 256 dots).
     // Generated explicitly (not via <pattern>) to avoid subpixel
     // offsets at small viewBox.
+    //
+    // The full 16×16 grid maps 1:1 onto the canvas (no percentage padding),
+    // so the perimeter dots double as a decorative frame around the drawing
+    // area. Edge dots are slightly larger to read as that border.
     const gridGroup = document.createElementNS(SVG_NS, 'g');
     gridGroup.setAttribute('fill', 'currentColor');
-    gridGroup.setAttribute('opacity', '0.35');
     for (let x = 0; x <= 15; x++) {
       for (let y = 0; y <= 15; y++) {
         const dot = document.createElementNS(SVG_NS, 'circle');
         dot.setAttribute('cx', String(x));
         dot.setAttribute('cy', String(y));
-        dot.setAttribute('r', '0.05');
+        const onEdge = x === 0 || x === 15 || y === 0 || y === 15;
+        dot.setAttribute('r', onEdge ? '0.07' : '0.05');
+        dot.setAttribute('opacity', onEdge ? '0.7' : '0.35');
         gridGroup.appendChild(dot);
       }
     }
-    drawGroup.appendChild(gridGroup);
+    this.drawGroup.appendChild(gridGroup);
 
     this.previewPath = document.createElementNS(SVG_NS, 'path') as SVGPathElement;
-    drawGroup.appendChild(this.previewPath);
+    this.drawGroup.appendChild(this.previewPath);
 
     this.highlightPath = document.createElementNS(SVG_NS, 'path') as SVGPathElement;
     this.highlightPath.setAttribute('fill', 'none');
@@ -85,21 +99,20 @@ export class GridCanvas {
     this.highlightPath.setAttribute('stroke-width', '0.4');
     this.highlightPath.setAttribute('stroke-opacity', '0');
     this.highlightPath.setAttribute('pointer-events', 'none');
-    drawGroup.appendChild(this.highlightPath);
+    this.drawGroup.appendChild(this.highlightPath);
 
-    this.previewSvg.appendChild(drawGroup);
+    this.previewSvg.appendChild(this.drawGroup);
 
-    this.canvasElement.append(this.mainImg, this.previewSvg);
+    this.canvasElement.append(this.committedSvg, this.previewSvg);
 
     this.initEvents();
-    this.updateMainPreview(stateManager.committedFigures);
+    renderCommittedSvg(this.committedSvg, stateManager.committedFigures);
   }
 
   private initEvents() {
     // --- Mouse: rysowanie / przesuwanie ---
     this.canvasElement.addEventListener('mousedown', (e: MouseEvent) => {
-      const rect = this.canvasElement.getBoundingClientRect();
-      const pos = getGridPos(e.clientX - rect.left, e.clientY - rect.top, this.canvasElement.clientWidth);
+      const pos = this.getGridPosFromClient(e.clientX, e.clientY);
       if(pos.x < 0 || pos.y < 0) return;
       if(pos.x >= 16 || pos.y >= 16) return;
 
@@ -128,8 +141,7 @@ export class GridCanvas {
     });
 
     this.canvasElement.addEventListener('mousemove', (e: MouseEvent) => {
-      const rect = this.canvasElement.getBoundingClientRect();
-      const pos = getGridPos(e.clientX - rect.left, e.clientY - rect.top, this.canvasElement.clientWidth);
+      const pos = this.getGridPosFromClient(e.clientX, e.clientY);
       if(pos.x < 0 || pos.y < 0) return;
       if(pos.x >= 16 || pos.y >= 16) return;
 
@@ -143,7 +155,7 @@ export class GridCanvas {
     });
 
     // Listen on window to end drawing/moving even when cursor leaves the grid
-    window.addEventListener('mouseup', () => {
+    this.windowMouseup = () => {
       if (this.isMoving) {
         this.isMoving = false;
         stateManager.commitMove();
@@ -155,7 +167,8 @@ export class GridCanvas {
       if (!this.isDrawing) return;
       this.isDrawing = false;
       stateManager.commitFigure();
-    });
+    };
+    window.addEventListener('mouseup', this.windowMouseup);
 
     // --- Touch: drawing / moving ---
     this.canvasElement.addEventListener('touchstart', (e: TouchEvent) => {
@@ -217,23 +230,28 @@ export class GridCanvas {
     this.canvasElement.addEventListener('touchcancel', endTouch);
 
     // --- Subscriptions ---
-    stateManager.subscribe('draftUpdated', (draft: DraftState) => this.renderPreview(draft));
-    stateManager.subscribe('committedUpdated', (figures: Figure[]) => this.updateMainPreview(figures));
-    stateManager.subscribe('toolChanged', (tool: string) => {
+    this.unsubs.push(stateManager.subscribe('draftUpdated', (draft: DraftState) => this.renderPreview(draft)));
+    this.unsubs.push(stateManager.subscribe('committedUpdated', (figures: Figure[]) => renderCommittedSvg(this.committedSvg, figures)));
+    this.unsubs.push(stateManager.subscribe('toolChanged', (tool: string) => {
       this.canvasElement.style.cursor = tool === 'm' ? 'grab' : 'crosshair';
-    });
-    stateManager.subscribe('movePreview', (data: { figureIndex: number; x1: number; y1: number; p1: number; p2: number }) => this.renderMovePreview(data));
-    stateManager.subscribe('figureHighlighted', (fig: Figure) => this.renderHighlight(fig));
+    }));
+    this.unsubs.push(stateManager.subscribe('movePreview', (data: { figureIndex: number; x1: number; y1: number; p1: number; p2: number }) => this.renderMovePreview(data)));
+    this.unsubs.push(stateManager.subscribe('figureHighlighted', (fig: Figure) => this.renderHighlight(fig)));
 
     // Set initial cursor
     this.canvasElement.style.cursor = stateManager.currentTool === 'm' ? 'grab' : 'crosshair';
   }
 
   private getTouchGridPos(touch: Touch): { x: number; y: number } {
-    const rect = this.canvasElement.getBoundingClientRect();
-    const offsetX = touch.clientX - rect.left;
-    const offsetY = touch.clientY - rect.top;
-    return getGridPos(offsetX, offsetY, this.canvasElement.clientWidth);
+    return this.getGridPosFromClient(touch.clientX, touch.clientY);
+  }
+
+  /** Converts a client-space point to 0-15 grid coords using the preview SVG's actual bounds. */
+  private getGridPosFromClient(clientX: number, clientY: number): { x: number; y: number } {
+    const rect = this.previewSvg.getBoundingClientRect();
+    const offsetX = clientX - rect.left;
+    const offsetY = clientY - rect.top;
+    return getGridPos(offsetX, offsetY, rect.width);
   }
 
   private renderPreview(draft: DraftState) {
@@ -250,43 +268,16 @@ export class GridCanvas {
     const opacity = (draft.opacity ?? 15) / 15;
     const rotation = (draft.rotation ?? 0) * 22.5;
 
-    // Bounding box center for rotation
-    const cx = (x1 + x2) / 2;
-    const cy = (y1 + y2) / 2;
-
     // Unified with backend compileToSvg (svgCompiler.ts)
-    const strokeWidth = (0.2 + draft.weight * 0.2).toFixed(1);
+    const sw = strokeWidth(draft.weight);
+    const strokeWidthStr = sw.toFixed(1);
+    const lineCap = getLineCap(draft.type);
 
-    let d = '';
-    switch (baseType) {
-      case 'l':
-        d = `M ${x1} ${y1} L ${x2} ${y2}`;
-        break;
-      case 'r':
-        d = `M ${x1} ${y1} H ${x2} V ${y2} H ${x1} Z`;
-        break;
-      case 'c': {
-        const r = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1), 1) / 2;
-        d = `M ${cx - r} ${cy} A ${r} ${r} 0 1 0 ${cx + r} ${cy} A ${r} ${r} 0 1 0 ${cx - r} ${cy} Z`;
-        break;
-      }
-      case 't': {
-        const x3 = 2 * x1 - x2;
-        d = `M ${x1} ${y1} L ${x2} ${y2} L ${x3} ${y2} Z`;
-        break;
-      }
-      case 'a': {
-        const r = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1), 1);
-        d = `M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`;
-        break;
-      }
-      default:
-        d = `M ${x1} ${y1} L ${x2} ${y2}`;
-    }
-
+    const d = buildPath(baseType, x1, y1, x2, y2);
     const isErase = draft.opacity === 0;
 
     this.previewPath.setAttribute('d', d);
+    this.previewPath.setAttribute('stroke-linecap', lineCap);
     if (isErase) {
       this.previewPath.setAttribute('stroke', 'url(#erase-pattern)');
       this.previewPath.setAttribute('stroke-width', String(Math.max(0.4, draft.weight * 0.2 + 0.2)));
@@ -295,16 +286,31 @@ export class GridCanvas {
       this.previewPath.setAttribute('fill-opacity', isFilled ? '0.5' : '0');
     } else {
       this.previewPath.setAttribute('stroke', color);
-      this.previewPath.setAttribute('stroke-width', strokeWidth);
+      this.previewPath.setAttribute('stroke-width', strokeWidthStr);
       this.previewPath.setAttribute('stroke-opacity', String(opacity * 0.85));
       this.previewPath.setAttribute('fill', isFilled ? color : 'none');
       this.previewPath.setAttribute('fill-opacity', isFilled ? String(opacity * 0.5) : '0');
     }
 
-    if (rotation !== 0) {
-      this.previewPath.setAttribute('transform', `rotate(${rotation} ${cx} ${cy})`);
-    } else {
-      this.previewPath.removeAttribute('transform');
+    const transform = rotationTransform(rotation, x1, y1, x2, y2);
+    if (transform) this.previewPath.setAttribute('transform', transform);
+    else this.previewPath.removeAttribute('transform');
+
+    // Arrowhead overlay on the draft preview.
+    const arrow = arrowheadPoints(draft.type, x1, y1, x2, y2, sw);
+    if (arrow) {
+      if (!this.arrowPath) {
+        this.arrowPath = document.createElementNS(SVG_NS, 'polygon');
+        this.drawGroup.appendChild(this.arrowPath);
+      }
+      this.arrowPath.setAttribute('points', arrow);
+      this.arrowPath.setAttribute('fill', isErase ? 'url(#erase-pattern)' : color);
+      this.arrowPath.setAttribute('stroke', 'none');
+      this.arrowPath.setAttribute('opacity', isErase ? '1' : String(opacity * 0.85));
+      if (transform) this.arrowPath.setAttribute('transform', transform);
+      else this.arrowPath.removeAttribute('transform');
+    } else if (this.arrowPath) {
+      this.arrowPath.removeAttribute('points');
     }
   }
 
@@ -322,41 +328,15 @@ export class GridCanvas {
     const color = getColorByIndex(fig.color);
     const opacity = (fig.opacity ?? 15) / 15;
     const rotation = (fig.rotation ?? 0) * 22.5;
+    const sw = strokeWidth(fig.weight);
+    const strokeWidthStr = sw.toFixed(1);
+    const lineCap = getLineCap(fig.type);
 
-    const cx = (x1 + x2) / 2;
-    const cy = (y1 + y2) / 2;
-    const strokeWidth = (0.2 + fig.weight * 0.2).toFixed(1);
-
-    let d = '';
-    switch (baseType) {
-      case 'l':
-        d = `M ${x1} ${y1} L ${x2} ${y2}`;
-        break;
-      case 'r':
-        d = `M ${x1} ${y1} H ${x2} V ${y2} H ${x1} Z`;
-        break;
-      case 'c': {
-        const r = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1), 1) / 2;
-        d = `M ${cx - r} ${cy} A ${r} ${r} 0 1 0 ${cx + r} ${cy} A ${r} ${r} 0 1 0 ${cx - r} ${cy} Z`;
-        break;
-      }
-      case 't': {
-        const x3 = 2 * x1 - x2;
-        d = `M ${x1} ${y1} L ${x2} ${y2} L ${x3} ${y2} Z`;
-        break;
-      }
-      case 'a': {
-        const r = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1), 1);
-        d = `M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`;
-        break;
-      }
-      default:
-        d = `M ${x1} ${y1} L ${x2} ${y2}`;
-    }
-
+    const d = buildPath(baseType, x1, y1, x2, y2);
     const isErase = fig.opacity === 0;
 
     this.previewPath.setAttribute('d', d);
+    this.previewPath.setAttribute('stroke-linecap', lineCap);
     if (isErase) {
       this.previewPath.setAttribute('stroke', 'url(#erase-pattern)');
       this.previewPath.setAttribute('stroke-width', String(Math.max(0.4, fig.weight * 0.2 + 0.2)));
@@ -365,71 +345,66 @@ export class GridCanvas {
       this.previewPath.setAttribute('fill-opacity', isFilled ? '0.5' : '0');
     } else {
       this.previewPath.setAttribute('stroke', color);
-      this.previewPath.setAttribute('stroke-width', strokeWidth);
+      this.previewPath.setAttribute('stroke-width', strokeWidthStr);
       this.previewPath.setAttribute('stroke-opacity', String(opacity * 0.85));
       this.previewPath.setAttribute('fill', isFilled ? color : 'none');
       this.previewPath.setAttribute('fill-opacity', isFilled ? String(opacity * 0.5) : '0');
     }
 
-    if (rotation !== 0) {
-      this.previewPath.setAttribute('transform', `rotate(${rotation} ${cx} ${cy})`);
-    } else {
-      this.previewPath.removeAttribute('transform');
+    const transform = rotationTransform(rotation, x1, y1, x2, y2);
+    if (transform) this.previewPath.setAttribute('transform', transform);
+    else this.previewPath.removeAttribute('transform');
+
+    // Arrowhead overlay for move preview.
+    const arrow = arrowheadPoints(fig.type, x1, y1, x2, y2, sw);
+    if (arrow) {
+      if (!this.arrowPath) {
+        this.arrowPath = document.createElementNS(SVG_NS, 'polygon');
+        this.drawGroup.appendChild(this.arrowPath);
+      }
+      this.arrowPath.setAttribute('points', arrow);
+      this.arrowPath.setAttribute('fill', isErase ? 'url(#erase-pattern)' : color);
+      this.arrowPath.setAttribute('stroke', 'none');
+      this.arrowPath.setAttribute('opacity', isErase ? '1' : String(opacity * 0.85));
+      if (transform) this.arrowPath.setAttribute('transform', transform);
+      else this.arrowPath.removeAttribute('transform');
+    } else if (this.arrowPath) {
+      this.arrowPath.removeAttribute('points');
     }
   }
 
   private renderHighlight(fig: Figure) {
     const x1 = fig.x1, y1 = fig.y1, x2 = fig.p1, y2 = fig.p2;
     const baseType = fig.type.toLowerCase();
-    const cx = (x1 + x2) / 2;
-    const cy = (y1 + y2) / 2;
     const rotation = (fig.rotation ?? 0) * 22.5;
 
-    let d = '';
-    switch (baseType) {
-      case 'l':
-        d = `M ${x1} ${y1} L ${x2} ${y2}`;
-        break;
-      case 'r':
-        d = `M ${x1} ${y1} H ${x2} V ${y2} H ${x1} Z`;
-        break;
-      case 'c': {
-        const r = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1), 1) / 2;
-        d = `M ${cx - r} ${cy} A ${r} ${r} 0 1 0 ${cx + r} ${cy} A ${r} ${r} 0 1 0 ${cx - r} ${cy} Z`;
-        break;
-      }
-      case 't': {
-        const x3 = 2 * x1 - x2;
-        d = `M ${x1} ${y1} L ${x2} ${y2} L ${x3} ${y2} Z`;
-        break;
-      }
-      case 'a': {
-        const r = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1), 1);
-        d = `M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`;
-        break;
-      }
-      default:
-        d = `M ${x1} ${y1} L ${x2} ${y2}`;
-    }
-
-    this.highlightPath.setAttribute('d', d);
+    this.highlightPath.setAttribute('d', buildPath(baseType, x1, y1, x2, y2));
     this.highlightPath.setAttribute('stroke-opacity', '0.8');
-    if (rotation !== 0) {
-      this.highlightPath.setAttribute('transform', `rotate(${rotation} ${cx} ${cy})`);
-    } else {
-      this.highlightPath.removeAttribute('transform');
-    }
+    const transform = rotationTransform(rotation, x1, y1, x2, y2);
+    if (transform) this.highlightPath.setAttribute('transform', transform);
+    else this.highlightPath.removeAttribute('transform');
 
-    setTimeout(() => {
+    if (this.highlightTimer !== null) window.clearTimeout(this.highlightTimer);
+    this.highlightTimer = window.setTimeout(() => {
       this.highlightPath.setAttribute('stroke-opacity', '0');
       this.highlightPath.removeAttribute('d');
       this.highlightPath.removeAttribute('transform');
+      this.highlightTimer = null;
     }, 800);
   }
 
-  private updateMainPreview(figures: Figure[]) {
-    const payload = encodeState(figures);
-    this.mainImg.src = payload ? `/r/${payload}?mode=preview&_=${Date.now()}` : '';
+  /** Releases all subscriptions and window listeners. Call before removing the view. */
+  destroy(): void {
+    for (const unsub of this.unsubs) unsub();
+    this.unsubs = [];
+    if (this.windowMouseup) {
+      window.removeEventListener('mouseup', this.windowMouseup);
+      this.windowMouseup = null;
+    }
+    if (this.highlightTimer !== null) {
+      window.clearTimeout(this.highlightTimer);
+      this.highlightTimer = null;
+    }
   }
 
   render(): HTMLElement {

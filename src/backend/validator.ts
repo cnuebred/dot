@@ -7,7 +7,13 @@ export interface ValidationResult {
 
 // Allowed tool letters: line (stroke only), and stroke/fill pair
 // for rectangle, circle, triangle and arc.
-const ALLOWED_TYPES = new Set(['l', 'r', 'R', 'c', 'C', 't', 'T', 'a', 'A']);
+// Line endings: l=round, s=square, b=butt, v=arrowhead (stroke only)
+// Arc endings:  a=round, k=square, n=butt, z=arrowhead (+ uppercase = fill)
+const ALLOWED_TYPES = new Set([
+  'l', 's', 'b', 'v',           // line variants (stroke)
+  'r', 'R', 'c', 'C', 't', 'T', // rectangle, circle, triangle
+  'a', 'A', 'k', 'K', 'n', 'N', 'z', 'Z', // arc variants
+]);
 const HEX_CHAR = /^[0-9a-fA-F]$/;
 const BLOCK_LENGTH_V3 = 8;
 const BLOCK_LENGTH_V4 = 11;

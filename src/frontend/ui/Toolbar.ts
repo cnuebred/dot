@@ -3,10 +3,12 @@ import type { ToolBase } from '../logic/stateManager';
 import { ExportModal } from './ExportModal';
 import { ColorPicker } from './ColorPicker';
 import { decodeState } from '../logic/decoder';
-import { encodeState } from '../logic/encoder';
+import { encodeCommittedState } from '../logic/encodeMemo';
 import { PALETTE_META } from '../../shared/palette';
 
 export class Toolbar {
+  private unsubs: Array<() => void> = [];
+
   render(): HTMLElement {
     const container = document.createElement('div');
     container.className = 'toolbar';
@@ -15,12 +17,18 @@ export class Toolbar {
     toolGroup.className = 'tool-group';
     toolGroup.innerHTML = `<label>Tools</label>`;
 
+    // Uwaga: narzędzia strzałkowe ('v' linia, 'z' łuk) są tymczasowo ukryte w UI,
+    // ale ich logika (renderowanie/walidacja) pozostaje aktywna w kodzie.
     const tools: { id: ToolBase, label: string }[] = [
       { id: 'l', label: 'Line' },
+      { id: 's', label: 'Line (square)' },
+      { id: 'b', label: 'Line (flat)' },
       { id: 'r', label: 'Rectangle' },
       { id: 'c', label: 'Circle' },
       { id: 't', label: 'Triangle' },
       { id: 'a', label: 'Arc' },
+      { id: 'k', label: 'Arc (square)' },
+      { id: 'n', label: 'Arc (flat)' },
       { id: 'm', label: '✋ Move' },
     ];
 
@@ -67,10 +75,10 @@ export class Toolbar {
     redoBtn.disabled = !stateManager.canRedo();
     redoBtn.onclick = () => stateManager.redo();
 
-    stateManager.subscribe('historyChanged', (data: { canUndo: boolean; canRedo: boolean }) => {
+    this.unsubs.push(stateManager.subscribe('historyChanged', (data: { canUndo: boolean; canRedo: boolean }) => {
       undoBtn.disabled = !data.canUndo;
       redoBtn.disabled = !data.canRedo;
-    });
+    }));
 
     historyButtons.append(undoBtn, redoBtn);
     historyGroup.appendChild(historyButtons);
@@ -190,9 +198,9 @@ export class Toolbar {
     eraseHint.textContent = 'Figure punches a hole through underlying shapes (knockout effect).';
 
     // Sync checkbox with opacity slider
-    stateManager.subscribe('opacityChanged', (val: number) => {
+    this.unsubs.push(stateManager.subscribe('opacityChanged', (val: number) => {
       eraseCheckbox.checked = val === 0;
-    });
+    }));
 
     eraseGroup.append(eraseSwitchWrapper, eraseHint);
     container.appendChild(eraseGroup);
@@ -312,7 +320,7 @@ export class Toolbar {
 
     // Funkcja aktualizująca input z bieżącego stanu canvasu
     const updateImportInput = () => {
-      const encoded = encodeState(stateManager.committedFigures);
+      const encoded = encodeCommittedState();
       if (encoded) {
         importInput.value = `${window.location.origin}/r/${encoded}`;
       } else {
@@ -354,7 +362,7 @@ export class Toolbar {
     };
 
     // Nasłuchuj zmian canvasu i aktualizuj input
-    stateManager.subscribe('committedUpdated', updateImportInput);
+    this.unsubs.push(stateManager.subscribe('committedUpdated', updateImportInput));
 
     const exportBtn = document.createElement('button');
     exportBtn.className = 'btn-primary';
@@ -369,5 +377,14 @@ export class Toolbar {
     container.appendChild(ioGroup);
 
     return container;
+  }
+
+  /** Registers subscriptions. Call after the toolbar DOM is rendered. Returns a cleanup function. */
+  attach(): () => void {
+    // No-op for now – subscriptions are registered during render() and tracked in this.unsubs.
+    return () => {
+      for (const unsub of this.unsubs) unsub();
+      this.unsubs = [];
+    };
   }
 }

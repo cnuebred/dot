@@ -4,21 +4,31 @@ import { getColorByIndex } from '../../shared/palette';
 
 export class LayerPanel {
   private container: HTMLElement;
+  private unsubs: Array<() => void> = [];
+  private highlightTimer: number | null = null;
 
   constructor() {
     this.container = document.createElement('div');
     this.container.className = 'layer-panel';
-    this.init();
   }
 
-  private init() {
-    stateManager.subscribe('committedUpdated', (figures: Figure[]) => {
+  /** Registers state subscriptions. Returns a cleanup function to release them. */
+  attach(): () => void {
+    this.unsubs.push(stateManager.subscribe('committedUpdated', (figures: Figure[]) => {
       this.renderLayers(figures);
-    });
-    stateManager.subscribe('figureHighlighted', (fig: Figure) => {
+    }));
+    this.unsubs.push(stateManager.subscribe('figureHighlighted', (fig: Figure) => {
       this.highlightSvgElement(fig);
-    });
+    }));
     this.renderLayers(stateManager.committedFigures);
+    return () => {
+      for (const unsub of this.unsubs) unsub();
+      this.unsubs = [];
+      if (this.highlightTimer !== null) {
+        window.clearTimeout(this.highlightTimer);
+        this.highlightTimer = null;
+      }
+    };
   }
 
   private highlightSvgElement(fig: Figure) {
@@ -31,8 +41,10 @@ export class LayerPanel {
     if (!layerItem) return;
 
     layerItem.classList.add('highlight-pulse');
-    setTimeout(() => {
+    if (this.highlightTimer !== null) window.clearTimeout(this.highlightTimer);
+    this.highlightTimer = window.setTimeout(() => {
       layerItem.classList.remove('highlight-pulse');
+      this.highlightTimer = null;
     }, 800);
   }
 

@@ -1,5 +1,5 @@
-export type ToolBase = 'l' | 'r' | 'c' | 't' | 'a' | 'm';
-export type ToolType = 'l' | 'L' | 'r' | 'R' | 'c' | 'C' | 'a' | 'A' | 't' | 'T';
+export type ToolBase = 'l' | 's' | 'b' | 'v' | 'r' | 'c' | 't' | 'a' | 'k' | 'n' | 'z' | 'm';
+export type ToolType = 'l' | 'L' | 's' | 'S' | 'b' | 'B' | 'v' | 'V' | 'r' | 'R' | 'c' | 'C' | 'a' | 'A' | 'k' | 'K' | 'n' | 'N' | 'z' | 'Z' | 't' | 'T';
 
 export interface Figure {
   x1: number;
@@ -64,6 +64,12 @@ class StateManager {
   public currentZIndex = 0;
   public autosaveEnabled = false;
 
+  /**
+   * Monotonic counter incremented whenever the committed figures change.
+   * Used to invalidate memoized encodings of committed state.
+   */
+  public committedRevision = 0;
+
   // --- Move Tool ---
   public selectedFigureIndex: number = -1;
   private moveStartX: number = 0;
@@ -80,15 +86,28 @@ class StateManager {
     this.autosaveEnabled = this.readLocalStorage(AUTOSAVE_ENABLED_KEY) === '1';
   }
 
-  subscribe(event: string, listener: StateListener) {
+  /** Subscribes to an event. Returns an unsubscribe function to release the listener. */
+  subscribe(event: string, listener: StateListener): () => void {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, []);
     }
     this.listeners.get(event)?.push(listener);
+    return () => {
+      const arr = this.listeners.get(event);
+      if (!arr) return;
+      const idx = arr.indexOf(listener);
+      if (idx !== -1) arr.splice(idx, 1);
+    };
   }
 
   private emit(event: string, data: any) {
     this.listeners.get(event)?.forEach(listener => listener(data));
+  }
+
+  /** Emits committedUpdated and bumps the revision (invalidates memoized encodings). */
+  private emitCommitted() {
+    this.committedRevision++;
+    this.emit('committedUpdated', this.committedFigures);
   }
 
   // --- History ---
@@ -120,7 +139,7 @@ class StateManager {
     this.historyLocked = true;
     this.historyIndex--;
     this.committedFigures = JSON.parse(JSON.stringify(this.historyStack[this.historyIndex]));
-    this.emit('committedUpdated', this.committedFigures);
+    this.emitCommitted();
     this.emit('historyChanged', { canUndo: this.canUndo(), canRedo: this.canRedo() });
     this.persistIfEnabled();
     this.historyLocked = false;
@@ -131,7 +150,7 @@ class StateManager {
     this.historyLocked = true;
     this.historyIndex++;
     this.committedFigures = JSON.parse(JSON.stringify(this.historyStack[this.historyIndex]));
-    this.emit('committedUpdated', this.committedFigures);
+    this.emitCommitted();
     this.emit('historyChanged', { canUndo: this.canUndo(), canRedo: this.canRedo() });
     this.persistIfEnabled();
     this.historyLocked = false;
@@ -179,9 +198,13 @@ class StateManager {
     this.emit('zIndexChanged', zIndex);
   }
 
-  /** Determines current tool letter (case = stroke/fill). Line is always stroke. */
+  /** Determines current tool letter (case = stroke/fill). Line variants are always stroke. */
   resolveType(): ToolType {
-    if (this.currentTool === 'l' || this.currentTool === 'm') return 'l';
+    // Line endings are always stroke-only.
+    if (this.currentTool === 'l' || this.currentTool === 's' || this.currentTool === 'b' || this.currentTool === 'v') {
+      return this.currentTool;
+    }
+    if (this.currentTool === 'm') return 'l';
     return (this.fillEnabled ? this.currentTool.toUpperCase() : this.currentTool) as ToolType;
   }
 
@@ -248,7 +271,7 @@ class StateManager {
     this.selectedFigureIndex = -1;
     this.moveOrigFigure = null;
     this.emit('selectionChanged', { index: -1, figure: null });
-    this.emit('committedUpdated', this.committedFigures);
+    this.emitCommitted();
     this.persistIfEnabled();
   }
 
@@ -284,7 +307,7 @@ class StateManager {
     this.committedFigures.push(newFigure);
     this.draft = { ...this.draft, active: false };
     
-    this.emit('committedUpdated', this.committedFigures);
+    this.emitCommitted();
     this.emit('draftUpdated', this.draft);
     this.persistIfEnabled();
   }
@@ -296,7 +319,7 @@ class StateManager {
   removeFigure(index: number) {
     this.pushHistory();
     this.committedFigures.splice(index, 1);
-    this.emit('committedUpdated', this.committedFigures);
+    this.emitCommitted();
     this.persistIfEnabled();
   }
 
@@ -307,14 +330,14 @@ class StateManager {
     this.pushHistory();
     const [moved] = this.committedFigures.splice(fromIndex, 1);
     this.committedFigures.splice(toIndex, 0, moved);
-    this.emit('committedUpdated', this.committedFigures);
+    this.emitCommitted();
     this.persistIfEnabled();
   }
 
   clearAll() {
     this.pushHistory();
     this.committedFigures = [];
-    this.emit('committedUpdated', this.committedFigures);
+    this.emitCommitted();
     this.persistIfEnabled();
   }
 
@@ -322,7 +345,7 @@ class StateManager {
   loadFigures(figures: Figure[]) {
     this.pushHistory();
     this.committedFigures = figures;
-    this.emit('committedUpdated', this.committedFigures);
+    this.emitCommitted();
     this.persistIfEnabled();
   }
 
@@ -367,7 +390,7 @@ class StateManager {
       const restored = JSON.parse(raw);
       if (Array.isArray(restored)) {
         this.committedFigures = restored;
-        this.emit('committedUpdated', this.committedFigures);
+        this.emitCommitted();
       }
     } catch {
       // Uszkodzone dane - ignorujemy i zaczynamy od pustego stanu.

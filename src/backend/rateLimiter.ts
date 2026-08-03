@@ -76,9 +76,58 @@ export class InMemoryRateLimitStore implements RateLimitStore {
   }
 }
 
-// ---- Default Instance (singleton) ----
+// ---- Redis Implementation (multi-machine / multi-process) ----
 
-export const rateLimiter = new RateLimiter(new InMemoryRateLimitStore());
+/**
+ * Redis-backed rate-limit store. Enforces limits globally across all
+ * processes/instances sharing the same Redis. Values are JSON
+ * `{count, resetAt}` strings with a Redis TTL matching the window.
+ *
+ * Only used when REDIS_URL is configured; otherwise falls back to in-memory.
+ */
+export class RedisRateLimitStore implements RateLimitStore {
+  private client: any;
+  private prefix: string;
+
+  constructor(url: string, prefix = 'dot:ratelimit:') {
+    this.prefix = prefix;
+    this.client = new (Bun as any).RedisClient(url);
+  }
+
+  private key(k: string): string {
+    return this.prefix + k;
+  }
+
+  async get(key: string): Promise<{ count: number; resetAt: number } | null> {
+    try {
+      const raw = await this.client.get(this.key(key));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (typeof parsed?.count !== 'number' || typeof parsed?.resetAt !== 'number') return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  async set(key: string, count: number, resetAt: number): Promise<void> {
+    try {
+      const ttlSeconds = Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
+      await this.client.set(this.key(key), JSON.stringify({ count, resetAt }), 'EX', ttlSeconds);
+    } catch {
+      // Redis down – degrade gracefully (allow the request through).
+    }
+  }
+}
+
+// ---- Default Instance (singleton) ----
+// Use Redis when configured for multi-machine rate limiting, else in-memory.
+
+const REDIS_URL = process.env.REDIS_URL || process.env.VALKEY_URL || '';
+
+export const rateLimiter = REDIS_URL
+  ? new RateLimiter(new RedisRateLimitStore(REDIS_URL))
+  : new RateLimiter(new InMemoryRateLimitStore());
 
 // ---- Helpers ----
 

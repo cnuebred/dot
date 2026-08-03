@@ -1,16 +1,14 @@
-/** Padding ratio inside .grid-canvas (11% – working area 78%). */
-export const GRID_PADDING_RATIO = 0.11;
+/**
+ * Maps a pixel offset within a drawing box to 0-15 grid coordinates.
+ * `size` is the width (in px) of the drawing area the offset refers to.
+ * No padding math here – the drawing area is the full 16×16 grid; any
+ * visual frame around it is handled via the SVG's own bounding box.
+ */
+export function getGridPos(offsetX: number, offsetY: number, size: number): { x: number, y: number } {
+  const cellSize = size / 15;
+  const x = Math.round(offsetX / cellSize);
+  const y = Math.round(offsetY / cellSize);
 
-export function getGridPos(offsetX: number, offsetY: number, containerWidth: number): { x: number, y: number } {
-  // Account for padding – drawing area is inner 75% of container
-  const drawAreaSize = containerWidth * (1 - 2 * GRID_PADDING_RATIO);
-  const drawAreaOffset = containerWidth * GRID_PADDING_RATIO;
-  const cellSize = drawAreaSize / 16;
-  
-  // Calculate 0-15 indices (hex 0-f, matching block format)
-  const x = Math.round((offsetX - drawAreaOffset) / cellSize);
-  const y = Math.round((offsetY - drawAreaOffset) / cellSize);
-  
   return {
     x: Math.max(0, Math.min(16, x)),
     y: Math.max(0, Math.min(16, y))

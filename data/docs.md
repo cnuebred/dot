@@ -5,7 +5,8 @@
 **dot.qrware.pl** is a stateless, zero-dependency SVG icon generator. Draw pixel-perfect icons on a 16×16 grid, encode them into a compact Base64URL payload, and embed them directly in a URL — no accounts, no databases, no server-side state.
 
 Every icon is fully self-contained in its URL. Share it, bookmark it, embed it in `<img>` tags — it just works.
-
+Discord Server: [dot.qrware.pl](https://discord.gg/Bm6sWcTCMC)
+Github: [cnuebred/dot](https://github.com/cnuebred/dot)
 ---
 
 ## Architecture

@@ -1,5 +1,6 @@
 import { validateAndDecodePayload } from './payloadValidation';
 import { AsyncMutex, atomicWrite } from './fileMutex';
+import { sqlite, sqliteEnabled } from './sqliteStore';
 
 /** Static link entry. */
 export interface StaticLinkEntry {
@@ -61,17 +62,47 @@ async function persist(): Promise<void> {
   }
 }
 
-/** Creates a new static link. */
+/** Creates a static link. */
 export async function createStaticLink(payload: string, title: string): Promise<CreateLinkResult> {
   return writeMutex.run(async () => {
-    await ensureLoaded();
-
     const validation = validateAndDecodePayload(payload);
     if (!validation.success) {
       return { success: false, error: validation.error };
     }
 
     const safeTitle = (typeof title === 'string' ? title : '').trim().slice(0, MAX_TITLE_LENGTH) || 'Untitled';
+
+    // SQLite path – process-safe.
+    if (sqliteEnabled) {
+      const db = sqlite();
+      if (db) {
+        try {
+          const entry: StaticLinkEntry = {
+            publicId: generatePublicId(),
+            ownerId: crypto.randomUUID(),
+            payload,
+            title: safeTitle,
+            createdAt: Date.now(),
+          };
+          db.query(
+            'INSERT INTO static_links (publicId, ownerId, payload, title, createdAt) VALUES (?, ?, ?, ?, ?)'
+          ).run(entry.publicId, entry.ownerId, entry.payload, entry.title, entry.createdAt);
+
+          const excess = (db.query('SELECT COUNT(*) AS c FROM static_links').get() as any).c as number - MAX_ENTRIES;
+          if (excess > 0) {
+            db.query(
+              'DELETE FROM static_links WHERE publicId IN (SELECT publicId FROM static_links ORDER BY createdAt ASC LIMIT ?)'
+            ).run(excess);
+          }
+          return { success: true, entry };
+        } catch (e) {
+          console.error('[StaticLinks] SQLite insert failed', e);
+          return { success: false, error: 'Failed to create link' };
+        }
+      }
+    }
+
+    await ensureLoaded();
 
     const entry: StaticLinkEntry = {
       publicId: generatePublicId(),
@@ -93,12 +124,30 @@ export async function createStaticLink(payload: string, title: string): Promise<
 
 /** Gets a link by publicId. */
 export async function getLinkByPublicId(publicId: string): Promise<StaticLinkEntry | null> {
+  if (sqliteEnabled) {
+    const db = sqlite();
+    if (db) {
+      const row = db.query(
+        'SELECT publicId, ownerId, payload, title, createdAt FROM static_links WHERE publicId = ?'
+      ).get(publicId) as unknown as StaticLinkEntry | null;
+      return row ?? null;
+    }
+  }
   await ensureLoaded();
   return cache.find((e) => e.publicId === publicId) ?? null;
 }
 
 /** Gets a link by ownerId. */
 export async function getLinkByOwnerId(ownerId: string): Promise<StaticLinkEntry | null> {
+  if (sqliteEnabled) {
+    const db = sqlite();
+    if (db) {
+      const row = db.query(
+        'SELECT publicId, ownerId, payload, title, createdAt FROM static_links WHERE ownerId = ?'
+      ).get(ownerId) as unknown as StaticLinkEntry | null;
+      return row ?? null;
+    }
+  }
   await ensureLoaded();
   return cache.find((e) => e.ownerId === ownerId) ?? null;
 }
@@ -106,19 +155,40 @@ export async function getLinkByOwnerId(ownerId: string): Promise<StaticLinkEntry
 /** Updates the payload of an existing link (by ownerId). */
 export async function updateStaticLink(ownerId: string, payload: string, title: string): Promise<CreateLinkResult> {
   return writeMutex.run(async () => {
-    await ensureLoaded();
-
-    const idx = cache.findIndex((e) => e.ownerId === ownerId);
-    if (idx === -1) {
-      return { success: false, error: 'Link does not exist' };
-    }
-
     const validation = validateAndDecodePayload(payload);
     if (!validation.success) {
       return { success: false, error: validation.error };
     }
 
     const safeTitle = (typeof title === 'string' ? title : '').trim().slice(0, MAX_TITLE_LENGTH) || 'Untitled';
+
+    // SQLite path.
+    if (sqliteEnabled) {
+      const db = sqlite();
+      if (db) {
+        try {
+          const exists = db.query('SELECT publicId FROM static_links WHERE ownerId = ?').get(ownerId);
+          if (!exists) return { success: false, error: 'Link does not exist' };
+          db.query(
+            'UPDATE static_links SET payload = ?, title = ? WHERE ownerId = ?'
+          ).run(payload, safeTitle, ownerId);
+          const updated = db.query(
+            'SELECT publicId, ownerId, payload, title, createdAt FROM static_links WHERE ownerId = ?'
+          ).get(ownerId) as unknown as StaticLinkEntry | null;
+          return { success: true, entry: updated! };
+        } catch (e) {
+          console.error('[StaticLinks] SQLite update failed', e);
+          return { success: false, error: 'Failed to update link' };
+        }
+      }
+    }
+
+    await ensureLoaded();
+
+    const idx = cache.findIndex((e) => e.ownerId === ownerId);
+    if (idx === -1) {
+      return { success: false, error: 'Link does not exist' };
+    }
 
     cache[idx] = { ...cache[idx], payload, title: safeTitle };
     await persist();

@@ -2,6 +2,8 @@
  * Simple async mutex for serializing file write operations.
  * Prevents race conditions when two parallel requests modify the same file.
  */
+import { rename } from 'node:fs/promises';
+
 export class AsyncMutex {
   private chain: Promise<void> = Promise.resolve();
 
@@ -22,5 +24,5 @@ export class AsyncMutex {
 export async function atomicWrite(path: string, data: string): Promise<void> {
   const tmpPath = path + '.tmp';
   await Bun.write(tmpPath, data);
-  await Bun.rename(tmpPath, path);
+  await rename(tmpPath, path);
 }
