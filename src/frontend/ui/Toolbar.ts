@@ -4,6 +4,7 @@ import { ExportModal } from './ExportModal';
 import { ColorPicker } from './ColorPicker';
 import { decodeState } from '../logic/decoder';
 import { encodeState } from '../logic/encoder';
+import { PALETTE_META } from '../../shared/palette';
 
 export class Toolbar {
   render(): HTMLElement {
@@ -99,6 +100,31 @@ export class Toolbar {
 
     fillGroup.append(switchWrapper, hint);
     container.appendChild(fillGroup);
+
+    // Palette selector (multi-palette support)
+    const paletteGroup = document.createElement('div');
+    paletteGroup.className = 'tool-group';
+    paletteGroup.innerHTML = `<label>Palette</label>`;
+
+    const paletteSelect = document.createElement('select');
+    paletteSelect.className = 'palette-select';
+    PALETTE_META.forEach((meta) => {
+      const opt = document.createElement('option');
+      opt.value = String(meta.id);
+      opt.textContent = meta.name;
+      opt.title = meta.description;
+      if (meta.id === stateManager.currentPalette) {
+        opt.selected = true;
+      }
+      paletteSelect.appendChild(opt);
+    });
+
+    paletteSelect.onchange = () => {
+      stateManager.setPalette(parseInt(paletteSelect.value));
+    };
+
+    paletteGroup.appendChild(paletteSelect);
+    container.appendChild(paletteGroup);
 
     // Line weight selection (16 levels, 0-15)
     const weightGroup = document.createElement('div');
