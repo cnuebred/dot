@@ -25,3 +25,8 @@ export function toHex(val: number): string {
 export function toHex2(val: number): string {
   return val.toString(16).toLowerCase().padStart(2, '0');
 }
+
+/** Encodes 12-bit color value (0-4095) as 3-char hex, required by v5 block format. */
+export function toHex3(val: number): string {
+  return val.toString(16).toLowerCase().padStart(3, '0');
+}

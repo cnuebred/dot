@@ -4,7 +4,7 @@
  * without breaking backward compatibility of old links.
  */
 
-export const FORMAT_VERSION = 4;
+export const FORMAT_VERSION = 5;
 export const VERSION_PREFIX = `v${FORMAT_VERSION}:`;
 
 export interface ParsedPayload {

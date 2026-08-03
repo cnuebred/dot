@@ -36,7 +36,7 @@ export function validateAndDecodePayload(payload: unknown): PayloadValidationOut
   if (!parsed) {
     return { success: false, error: 'Missing format version preamble' };
   }
-  // Accept v3 and v4 (validator.ts handles both block formats)
+  // Accept v3, v4 and v5 (validator.ts handles all block formats)
   if (parsed.version < 3 || parsed.version > FORMAT_VERSION) {
     return { success: false, error: `Unsupported format version: v${parsed.version}` };
   }

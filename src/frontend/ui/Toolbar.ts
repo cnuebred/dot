@@ -106,26 +106,6 @@ export class Toolbar {
     paletteGroup.className = 'tool-group';
     paletteGroup.innerHTML = `<label>Palette</label>`;
 
-    const paletteSelect = document.createElement('select');
-    paletteSelect.className = 'palette-select';
-    PALETTE_META.forEach((meta) => {
-      const opt = document.createElement('option');
-      opt.value = String(meta.id);
-      opt.textContent = meta.name;
-      opt.title = meta.description;
-      if (meta.id === stateManager.currentPalette) {
-        opt.selected = true;
-      }
-      paletteSelect.appendChild(opt);
-    });
-
-    paletteSelect.onchange = () => {
-      stateManager.setPalette(parseInt(paletteSelect.value));
-    };
-
-    paletteGroup.appendChild(paletteSelect);
-    container.appendChild(paletteGroup);
-
     // Line weight selection (16 levels, 0-15)
     const weightGroup = document.createElement('div');
     weightGroup.className = 'tool-group';

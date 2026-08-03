@@ -7,7 +7,7 @@ export interface Figure {
   type: ToolType;
   p1: number;
   p2: number;
-  /** Color index (0-63) from 64-color palette (Format 2.0). */
+  /** 12-bit color value (0-4095): paletteId<<6 | colorIndex (Format 5.0). */
   color: number;
   /** Line weight (0-15), 16 levels. 0 = thinnest, 15 = thickest. */
   weight: number;

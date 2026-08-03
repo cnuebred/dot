@@ -20,8 +20,12 @@ export interface CompileOptions {
 export function compileToSvg(text: string, options: CompileOptions = {}): string {
   const BLOCK_V3 = 8;
   const BLOCK_V4 = 11;
-  const blockLen = text.length % BLOCK_V4 === 0 ? BLOCK_V4 : BLOCK_V3;
+  const BLOCK_V5 = 12;
+  const blockLen = text.length % BLOCK_V5 === 0 ? BLOCK_V5
+    : text.length % BLOCK_V4 === 0 ? BLOCK_V4
+    : BLOCK_V3;
   const isV4 = blockLen === BLOCK_V4;
+  const isV5 = blockLen === BLOCK_V5;
 
   // 16×16 grid – padding provided by CSS (12.5% on .grid-canvas).
   const additionalPadding = 0;
@@ -41,13 +45,18 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
     const type = block[2]!;
     const x2 = parseInt(block[3]!, 16) + additionalPadding;
     const y2 = parseInt(block[4]!, 16) + additionalPadding;
-    const colorIndex = parseInt(block.substring(5, 7), 16);
-    const weight = parseInt(block[7]!, 16);
+    // v5: 3 hex chars (12-bit color), v3/v4: 2 hex chars (8-bit color)
+    const colorIndex = isV5
+      ? parseInt(block.substring(5, 8), 16)
+      : parseInt(block.substring(5, 7), 16);
+    const weightOffset = isV5 ? 8 : 7;
+    const weight = parseInt(block[weightOffset]!, 16);
 
-    // v4: extra fields
-    const opacity = isV4 ? parseInt(block[8]!, 16) / 15 : 1.0;
-    const rotation = isV4 ? parseInt(block[9]!, 16) * 22.5 : 0;
-    const zIndex = isV4 ? parseInt(block[10]!, 16) : 0;
+    // v4/v5: extra fields
+    const extOffset = isV5 ? 9 : 8;
+    const opacity = (isV4 || isV5) ? parseInt(block[extOffset]!, 16) / 15 : 1.0;
+    const rotation = (isV4 || isV5) ? parseInt(block[extOffset + 1]!, 16) * 22.5 : 0;
+    const zIndex = (isV4 || isV5) ? parseInt(block[extOffset + 2]!, 16) : 0;
 
     const isFilled = type !== 'l' && type === type.toUpperCase();
     const color = getColorByIndex(colorIndex);
