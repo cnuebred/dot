@@ -70,7 +70,16 @@ export function ensureApiKeysTable(): void {
  * Tier-based rate-limit window for `/api/batch`.
  * Paid keys get a much higher per-key allowance; free (IP) requests share the
  * anonymous limit.
+ *
+ * NOTE: When `DOT_DISABLE_LIMITS` is set to a truthy value, limits are
+ * effectively disabled (no enforcement) so every user works without limits.
+ * The code below is kept intact and can be re-enabled by removing the flag.
  */
+export function limitsDisabled(): boolean {
+  const v = process.env.DOT_DISABLE_LIMITS;
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
 export function batchLimits(tier: ApiTier): { limit: number; windowMs: number } {
   if (tier === 'paid') {
     return { limit: Number(process.env.DOT_BATCH_PAID_LIMIT || 1000), windowMs: 60_000 };

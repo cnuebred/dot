@@ -7,7 +7,7 @@ import { getPageSecurityHeaders, getAssetSecurityHeaders, getApiSecurityHeaders 
 import { rateLimiter, getClientIp } from './rateLimiter';
 import { renderCache, RenderCache } from './renderCache';
 import { tryRedisGet, redisSet, redisCacheEnabled } from './redisCache';
-import { resolveTier, batchLimits, staticLinkQuota } from './apiKeys';
+import { resolveTier, batchLimits, staticLinkQuota, limitsDisabled } from './apiKeys';
 import { sqliteEnabled } from './sqliteStore';
 import { listGalleryEntries, addGalleryEntry } from './gallery';
 import { createStaticLink, getLinkByPublicId, getLinkByOwnerId, updateStaticLink } from './staticLinks';
@@ -572,16 +572,20 @@ Bun.serve({
       metrics.requests++;
 
       // Tier-based API access: anonymous (free, IP-limited) vs. paid API keys.
+      // NOTE: limits are currently disabled (DOT_DISABLE_LIMITS=1) so all users
+      // work without limits. Re-enable by removing the flag / uncommenting below.
       const tier = resolveTier(req.headers.get('authorization'));
-      const limits = batchLimits(tier);
-      // Key rate-limit buckets are per-key for paid; per-IP for free.
-      const keyForLimit = tier === 'paid'
-        ? `batch:key:${req.headers.get('authorization')!.replace(/^Bearer\s+/i, '')}`
-        : `batch:${ip}`;
-      const rate = await rateLimiter.check(keyForLimit, limits);
-      if (rate.limited) {
-        metrics.rateLimited++;
-        return jsonResponse({ error: 'Too many requests' }, 429);
+      if (!limitsDisabled()) {
+        const limits = batchLimits(tier);
+        // Key rate-limit buckets are per-key for paid; per-IP for free.
+        const keyForLimit = tier === 'paid'
+          ? `batch:key:${req.headers.get('authorization')!.replace(/^Bearer\s+/i, '')}`
+          : `batch:${ip}`;
+        const rate = await rateLimiter.check(keyForLimit, limits);
+        if (rate.limited) {
+          metrics.rateLimited++;
+          return jsonResponse({ error: 'Too many requests' }, 429);
+        }
       }
 
       try {
@@ -715,17 +719,20 @@ Bun.serve({
         if (rate.limited) { metrics.rateLimited++; return jsonResponse({ error: 'Too many requests' }, 429); }
 
         // Freemium: free users get a limited number of static links per day.
+        // NOTE: limits currently disabled (DOT_DISABLE_LIMITS=1) → unlimited.
         const tier = resolveTier(req.headers.get('authorization'));
-        const quota = staticLinkQuota(tier);
-        if (quota !== null) {
-          const dailyKey = `links-daily:${ip}:${Math.floor(Date.now() / 86_400_000)}`;
-          const created = await rateLimiter.check(dailyKey, { limit: quota, windowMs: 86_400_000 });
-          if (created.limited) {
-            metrics.rateLimited++;
-            return jsonResponse({
-              error: 'Free plan allows only ' + quota + ' static links per day. Upgrade for unlimited links.',
-              upgrade: true,
-            }, 429);
+        if (!limitsDisabled()) {
+          const quota = staticLinkQuota(tier);
+          if (quota !== null) {
+            const dailyKey = `links-daily:${ip}:${Math.floor(Date.now() / 86_400_000)}`;
+            const created = await rateLimiter.check(dailyKey, { limit: quota, windowMs: 86_400_000 });
+            if (created.limited) {
+              metrics.rateLimited++;
+              return jsonResponse({
+                error: 'Free plan allows only ' + quota + ' static links per day. Upgrade for unlimited links.',
+                upgrade: true,
+              }, 429);
+            }
           }
         }
 

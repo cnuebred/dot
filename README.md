@@ -93,6 +93,7 @@ The backend automatically serves the built frontend from the `dist/` directory �
 | `DOT_BATCH_PAID_LIMIT` | `1000` | `/api/batch` requests/min for paid keys |
 | `DOT_BATCH_FREE_LIMIT` | `30` | `/api/batch` requests/min for anonymous |
 | `DOT_LINKS_FREE_QUOTA` | `5` | Static links/day for anonymous; paid keys are unlimited |
+| `DOT_DISABLE_LIMITS` | _(unset)_ | `1`/`true` → **wyłącza** enforcement limitów batch + static links (każdy bez limitów). Kod limitów pozostaje, można włączyć ponownie usuwając flagę. |
 
 **CDN note:** routes `/r/*`, `/favicon/*` return `Cache-Control: immutable` + a strong `ETag` and are safe to put entirely behind a CDN/nginx cache — no shared state is needed for pure icon rendering.
 
