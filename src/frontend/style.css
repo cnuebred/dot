@@ -250,7 +250,7 @@ body {
     background-color: white;
 }
 
-/* Palette selector bar (multi-palette tabs) */
+/* Palette selector bar (multi-palette tabs, scrollable for 16 palettes) */
 .palette-bar {
     display: flex;
     gap: 3px;
@@ -258,11 +258,24 @@ body {
     padding: 3px;
     background: var(--bg-input);
     border-radius: 6px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: thin;
+    scrollbar-color: var(--accent) transparent;
+}
+
+.palette-bar::-webkit-scrollbar {
+    height: 4px;
+}
+
+.palette-bar::-webkit-scrollbar-thumb {
+    background: var(--accent);
+    border-radius: 2px;
 }
 
 .palette-tab {
-    flex: 1;
-    padding: 4px 6px;
+    flex: 0 0 auto;
+    padding: 4px 8px;
     font-size: 10px;
     font-weight: 600;
     text-align: center;
