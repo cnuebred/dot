@@ -1,6 +1,8 @@
 export type ToolBase = 'l' | 's' | 'b' | 'v' | 'r' | 'c' | 't' | 'a' | 'k' | 'n' | 'z' | 'm';
 export type ToolType = 'l' | 'L' | 's' | 'S' | 'b' | 'B' | 'v' | 'V' | 'r' | 'R' | 'c' | 'C' | 'a' | 'A' | 'k' | 'K' | 'n' | 'N' | 'z' | 'Z' | 't' | 'T';
 
+import { applyBoolean } from './booleanOps';
+
 export interface Figure {
   x1: number;
   y1: number;
@@ -17,6 +19,8 @@ export interface Figure {
   rotation: number;
   /** Z-index 0-15 (higher = on top). v4. */
   zIndex: number;
+  /** Corner radius 0-15 (rounded corners on rect). v6. */
+  radius: number;
 }
 
 export interface DraftState {
@@ -31,6 +35,7 @@ export interface DraftState {
   opacity: number;
   rotation: number;
   zIndex: number;
+  radius: number;
 }
 
 type StateListener = (data: any) => void;
@@ -53,9 +58,11 @@ class StateManager {
     opacity: 15,
     rotation: 0,
     zIndex: 0,
+    radius: 0,
   };
   public currentTool: ToolBase = 'l';
   public fillEnabled = false;
+  public currentRadius = 0;
   public currentColor = 0;
   public currentPalette = 0;
   public currentWeight = 0;
@@ -70,11 +77,13 @@ class StateManager {
    */
   public committedRevision = 0;
 
-  // --- Move Tool ---
-  public selectedFigureIndex: number = -1;
+  // --- Selection & Move Tool ---
+  public selectedIndices: number[] = [];
   private moveStartX: number = 0;
   private moveStartY: number = 0;
-  private moveOrigFigure: Figure | null = null;
+  private moveOrigFigures: Figure[] = [];
+  private clipboard: Figure[] = [];
+  private groups: number[][] = [];
 
   // --- Undo/Redo History ---
   private historyStack: Figure[][] = [];
@@ -198,6 +207,11 @@ class StateManager {
     this.emit('zIndexChanged', zIndex);
   }
 
+  setRadius(radius: number) {
+    this.currentRadius = radius;
+    this.emit('radiusChanged', radius);
+  }
+
   /** Determines current tool letter (case = stroke/fill). Line variants are always stroke. */
   resolveType(): ToolType {
     // Line endings are always stroke-only.
@@ -208,77 +222,338 @@ class StateManager {
     return (this.fillEnabled ? this.currentTool.toUpperCase() : this.currentTool) as ToolType;
   }
 
-  // --- Move Tool ---
+  // --- Selection & Move Tool ---
 
-  /** Próbuje zaznaczyć figurę w punkcie (gx, gy) – współrzędne siatki 0-16. */
-  selectFigureAt(gx: number, gy: number): number {
+  /** Returns the index of the topmost figure whose bounding box contains (gx, gy). */
+  figureAt(gx: number, gy: number): number {
     for (let i = this.committedFigures.length - 1; i >= 0; i--) {
-      const f = this.committedFigures[i];
+      const f = this.committedFigures[i]!;
       const minX = Math.min(f.x1, f.p1);
       const maxX = Math.max(f.x1, f.p1);
       const minY = Math.min(f.y1, f.p2);
       const maxY = Math.max(f.y1, f.p2);
-      if (gx >= minX && gx <= maxX && gy >= minY && gy <= maxY) {
-        this.selectedFigureIndex = i;
-        this.moveStartX = gx;
-        this.moveStartY = gy;
-        this.moveOrigFigure = { ...f };
-        this.emit('selectionChanged', { index: i, figure: f });
-        this.emit('figureHighlighted', f);
-        return i;
-      }
+      if (gx >= minX && gx <= maxX && gy >= minY && gy <= maxY) return i;
     }
-    this.selectedFigureIndex = -1;
-    this.moveOrigFigure = null;
-    this.emit('selectionChanged', { index: -1, figure: null });
     return -1;
   }
 
-  /** Przesuwa zaznaczoną figurę o (dx, dy) względem punktu startowego. */
-  moveSelectedBy(gx: number, gy: number) {
-    if (this.selectedFigureIndex < 0 || !this.moveOrigFigure) return;
-    const dx = gx - this.moveStartX;
-    const dy = gy - this.moveStartY;
-    const orig = this.moveOrigFigure;
-    const f = this.committedFigures[this.selectedFigureIndex];
-    f.x1 = orig.x1 + dx;
-    f.y1 = orig.y1 + dy;
-    f.p1 = orig.p1 + dx;
-    f.p2 = orig.p2 + dy;
-    // Emituj podgląd na froncie (SVG) – bez wysyłania requestu do serwera
-    this.emit('movePreview', {
-      figureIndex: this.selectedFigureIndex,
-      x1: f.x1,
-      y1: f.y1,
-      p1: f.p1,
-      p2: f.p2,
-    });
+  /** Selects a single figure (or toggles when additive). Returns the index or -1. */
+  selectFigureAt(gx: number, gy: number, additive = false): number {
+    const idx = this.figureAt(gx, gy);
+    if (idx < 0) {
+      if (!additive) this.clearSelection();
+      return -1;
+    }
+    if (additive) {
+      this.toggleSelection(idx);
+      return idx;
+    }
+    this.setSelection([idx]);
+    this.emit('figureHighlighted', this.committedFigures[idx]!);
+    return idx;
   }
 
-  /** Kończy przesuwanie – zapisuje stan do historii i wysyła do serwera.
-   *  Jeśli figura wyszła poza pole 0–15, operacja jest automatycznie cofana (UNDO). */
-  commitMove() {
-    if (this.selectedFigureIndex < 0) return;
-    const f = this.committedFigures[this.selectedFigureIndex];
-    const outOfBounds = f.x1 < 0 || f.x1 > 15 || f.y1 < 0 || f.y1 > 15 ||
-                        f.p1 < 0 || f.p1 > 15 || f.p2 < 0 || f.p2 > 15;
-    if (outOfBounds && this.moveOrigFigure) {
-      // UNDO – przywróć figurę do stanu sprzed przesunięcia
-      this.committedFigures[this.selectedFigureIndex] = { ...this.moveOrigFigure };
+  /** Selects all figures intersecting the marquee rect (inclusive). */
+  selectInRect(x1: number, y1: number, x2: number, y2: number, additive = false) {
+    const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+    const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
+    const hits: number[] = [];
+    this.committedFigures.forEach((f, i) => {
+      const fMinX = Math.min(f.x1, f.p1), fMaxX = Math.max(f.x1, f.p1);
+      const fMinY = Math.min(f.y1, f.p2), fMaxY = Math.max(f.y1, f.p2);
+      if (fMinX <= maxX && fMaxX >= minX && fMinY <= maxY && fMaxY >= minY) hits.push(i);
+    });
+    if (additive) {
+      const set = new Set(this.selectedIndices);
+      hits.forEach(i => set.add(i));
+      this.setSelection([...set]);
     } else {
-      this.pushHistory();
+      this.setSelection(hits);
     }
-    this.selectedFigureIndex = -1;
-    this.moveOrigFigure = null;
-    this.emit('selectionChanged', { index: -1, figure: null });
+  }
+
+  setSelection(indices: number[]) {
+    this.selectedIndices = [...indices];
+    this.emit('selectionChanged', { indices: this.selectedIndices });
+  }
+
+  toggleSelection(idx: number) {
+    const pos = this.selectedIndices.indexOf(idx);
+    if (pos === -1) this.selectedIndices.push(idx);
+    else this.selectedIndices.splice(pos, 1);
+    this.emit('selectionChanged', { indices: this.selectedIndices });
+  }
+
+  clearSelection() {
+    this.selectedIndices = [];
+    this.moveOrigFigures = [];
+    this.emit('selectionChanged', { indices: [] });
+  }
+
+  /** Bounding box (grid coords) of the current selection, or null when empty. */
+  selectionBounds(): { minX: number; minY: number; maxX: number; maxY: number } | null {
+    if (this.selectedIndices.length === 0) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const i of this.selectedIndices) {
+      const f = this.committedFigures[i];
+      if (!f) continue;
+      minX = Math.min(minX, f.x1, f.p1);
+      minY = Math.min(minY, f.y1, f.p2);
+      maxX = Math.max(maxX, f.x1, f.p1);
+      maxY = Math.max(maxY, f.y1, f.p2);
+    }
+    return { minX, minY, maxX, maxY };
+  }
+
+  /** Begins a move of the current selection, snapshotting original positions. */
+  beginMove() {
+    this.moveStartX = 0;
+    this.moveStartY = 0;
+    this.moveOrigFigures = this.selectedIndices.map(i => ({ ...this.committedFigures[i]! }));
+  }
+
+  /** Moves the selected figures by (dx, dy) grid steps (live preview). */
+  moveSelectedBy(dx: number, dy: number) {
+    if (this.selectedIndices.length === 0 || this.moveOrigFigures.length === 0) return;
+    this.selectedIndices.forEach((idx, k) => {
+      const orig = this.moveOrigFigures[k];
+      if (!orig) return;
+      const f = this.committedFigures[idx]!;
+      f.x1 = orig.x1 + dx;
+      f.y1 = orig.y1 + dy;
+      f.p1 = orig.p1 + dx;
+      f.p2 = orig.p2 + dy;
+    });
+    this.emit('movePreview', { indices: this.selectedIndices });
+  }
+
+  /** Commits a move. Shapes may extend beyond the 0–15 grid (v7), clipped on render. */
+  commitMove() {
+    if (this.selectedIndices.length === 0) return;
+    this.pushHistory();
+    this.moveOrigFigures = [];
     this.emitCommitted();
     this.persistIfEnabled();
   }
 
-  clearSelection() {
-    this.selectedFigureIndex = -1;
-    this.moveOrigFigure = null;
-    this.emit('selectionChanged', { index: -1, figure: null });
+  /** Nudges the selection by (dx, dy) grid steps (may extend beyond the grid, v7). */
+  nudgeSelection(dx: number, dy: number) {
+    if (this.selectedIndices.length === 0) return;
+    this.beginMove();
+    this.moveSelectedBy(dx, dy);
+    this.moveOrigFigures = [];
+    this.pushHistory();
+    this.emitCommitted();
+    this.persistIfEnabled();
+  }
+
+  /** Resizes the selection's bounding box to (newMinX, newMinY, newMaxX, newMaxY). */
+  resizeSelection(newMinX: number, newMinY: number, newMaxX: number, newMaxY: number) {
+    const bounds = this.selectionBounds();
+    if (!bounds) return;
+    const sx = (newMaxX - newMinX) / Math.max(1, bounds.maxX - bounds.minX);
+    const sy = (newMaxY - newMinY) / Math.max(1, bounds.maxY - bounds.minY);
+    this.selectedIndices.forEach(i => {
+      const f = this.committedFigures[i]!;
+      f.x1 = Math.round(newMinX + (f.x1 - bounds.minX) * sx);
+      f.p1 = Math.round(newMinX + (f.p1 - bounds.minX) * sx);
+      f.y1 = Math.round(newMinY + (f.y1 - bounds.minY) * sy);
+      f.p2 = Math.round(newMinY + (f.p2 - bounds.minY) * sy);
+    });
+    this.emit('movePreview', { indices: this.selectedIndices });
+  }
+
+  /** Rotates the selection by `steps` (each = 22.5°) around its center. */
+  rotateSelection(steps: number, commitHistory = true) {
+    if (this.selectedIndices.length === 0) return;
+    if (commitHistory) this.pushHistory();
+    this.selectedIndices.forEach(i => {
+      const f = this.committedFigures[i]!;
+      f.rotation = (f.rotation + steps + 16) % 16;
+    });
+    this.emitCommitted();
+    if (commitHistory) this.persistIfEnabled();
+  }
+
+  /** Flips the selection horizontally (mirror around vertical center axis). */
+  flipSelectionHorizontal() {
+    const bounds = this.selectionBounds();
+    if (!bounds) return;
+    this.pushHistory();
+    const cx = (bounds.minX + bounds.maxX) / 2;
+    this.selectedIndices.forEach(i => {
+      const f = this.committedFigures[i]!;
+      f.x1 = Math.round(2 * cx - f.x1);
+      f.p1 = Math.round(2 * cx - f.p1);
+    });
+    this.emitCommitted();
+    this.persistIfEnabled();
+  }
+
+  /** Flips the selection vertically (mirror around horizontal center axis). */
+  flipSelectionVertical() {
+    const bounds = this.selectionBounds();
+    if (!bounds) return;
+    this.pushHistory();
+    const cy = (bounds.minY + bounds.maxY) / 2;
+    this.selectedIndices.forEach(i => {
+      const f = this.committedFigures[i]!;
+      f.y1 = Math.round(2 * cy - f.y1);
+      f.p2 = Math.round(2 * cy - f.p2);
+    });
+    this.emitCommitted();
+    this.persistIfEnabled();
+  }
+
+  /** Aligns the selection to the canvas or to the selection bounds. */
+  alignSelection(axis: 'left' | 'centerX' | 'right' | 'top' | 'centerY' | 'bottom', toCanvas: boolean) {
+    const bounds = this.selectionBounds();
+    if (!bounds) return;
+    this.pushHistory();
+    const dx = (() => {
+      if (axis === 'left') return (toCanvas ? 0 : bounds.minX) - bounds.minX;
+      if (axis === 'right') return (toCanvas ? 15 : bounds.maxX) - bounds.maxX;
+      if (axis === 'centerX') return (toCanvas ? 7.5 : (bounds.minX + bounds.maxX) / 2) - (bounds.minX + bounds.maxX) / 2;
+      return 0;
+    })();
+    const dy = (() => {
+      if (axis === 'top') return (toCanvas ? 0 : bounds.minY) - bounds.minY;
+      if (axis === 'bottom') return (toCanvas ? 15 : bounds.maxY) - bounds.maxY;
+      if (axis === 'centerY') return (toCanvas ? 7.5 : (bounds.minY + bounds.maxY) / 2) - (bounds.minY + bounds.maxY) / 2;
+      return 0;
+    })();
+    this.selectedIndices.forEach(i => {
+      const f = this.committedFigures[i]!;
+      f.x1 += Math.round(dx); f.p1 += Math.round(dx);
+      f.y1 += Math.round(dy); f.p2 += Math.round(dy);
+    });
+    this.emitCommitted();
+    this.persistIfEnabled();
+  }
+
+  /** Distributes the selection evenly along the given axis. */
+  distributeSelection(axis: 'x' | 'y') {
+    if (this.selectedIndices.length < 3) return;
+    this.pushHistory();
+    const sorted = [...this.selectedIndices].sort((a, b) => {
+      const fa = this.committedFigures[a]!, fb = this.committedFigures[b]!;
+      return axis === 'x'
+        ? Math.min(fa.x1, fa.p1) - Math.min(fb.x1, fb.p1)
+        : Math.min(fa.y1, fa.p2) - Math.min(fb.y1, fb.p2);
+    });
+    const first = sorted[0]!, last = sorted[sorted.length - 1]!;
+    const fFirst = this.committedFigures[first]!, fLast = this.committedFigures[last]!;
+    const start = axis === 'x' ? Math.min(fFirst.x1, fFirst.p1) : Math.min(fFirst.y1, fFirst.p2);
+    const end = axis === 'x' ? Math.max(fLast.x1, fLast.p1) : Math.max(fLast.y1, fLast.p2);
+    const gap = (end - start) / (sorted.length - 1);
+    sorted.forEach((idx, k) => {
+      const f = this.committedFigures[idx]!;
+      const cur = axis === 'x' ? Math.min(f.x1, f.p1) : Math.min(f.y1, f.p2);
+      const delta = Math.round(start + gap * k - cur);
+      if (axis === 'x') { f.x1 += delta; f.p1 += delta; }
+      else { f.y1 += delta; f.p2 += delta; }
+    });
+    this.emitCommitted();
+    this.persistIfEnabled();
+  }
+
+  // --- Clipboard ---
+
+  copySelection() {
+    this.clipboard = this.selectedIndices.map(i => ({ ...this.committedFigures[i]! }));
+    this.emit('clipboardChanged', this.clipboard.length);
+  }
+
+  /** Pastes the clipboard, offsetting each figure by (dx, dy) and selecting the new copies. */
+  pasteClipboard(dx = 1, dy = 1) {
+    if (this.clipboard.length === 0) return;
+    this.pushHistory();
+    const newIndices: number[] = [];
+    for (const fig of this.clipboard) {
+      const copy: Figure = { ...fig, x1: fig.x1 + dx, y1: fig.y1 + dy, p1: fig.p1 + dx, p2: fig.p2 + dy };
+      this.committedFigures.push(copy);
+      newIndices.push(this.committedFigures.length - 1);
+    }
+    this.setSelection(newIndices);
+    this.emitCommitted();
+    this.persistIfEnabled();
+  }
+
+  /** Duplicates the selection in place (offset by 1 grid step). */
+  duplicateSelection() {
+    if (this.selectedIndices.length === 0) return;
+    this.copySelection();
+    this.pasteClipboard(1, 1);
+  }
+
+  // --- Grouping ---
+
+  /** Groups the selected figures so they move/transform together. */
+  groupSelection() {
+    if (this.selectedIndices.length < 2) return;
+    this.groups.push([...this.selectedIndices]);
+    this.emit('groupsChanged', this.groups);
+  }
+
+  /** Removes the group containing the given figure index. */
+  ungroupSelection() {
+    if (this.selectedIndices.length === 0) return;
+    const set = new Set(this.selectedIndices);
+    this.groups = this.groups.filter(g => !g.some(i => set.has(i)));
+    this.emit('groupsChanged', this.groups);
+  }
+
+  /** Returns the full set of indices to operate on (expands groups). */
+  selectionWithGroups(): number[] {
+    const set = new Set(this.selectedIndices);
+    for (const g of this.groups) {
+      if (g.some(i => set.has(i))) g.forEach(i => set.add(i));
+    }
+    return [...set];
+  }
+
+  // --- Boolean (Pathfinder) operations ---
+
+  /**
+   * Applies a boolean operation (union/intersect/subtract) to exactly two
+   * selected figures. The two figures are replaced by the resulting
+   * rectangle(s). Requires exactly 2 figures selected. This is the
+   * "sumowanie / nakładanie / wycinanie" of shapes.
+   */
+  booleanOp(op: 'union' | 'intersect' | 'subtract') {
+    if (this.selectedIndices.length !== 2) return false;
+    const ia = this.selectedIndices[0]!;
+    const ib = this.selectedIndices[1]!;
+    const a = this.committedFigures[ia];
+    const b = this.committedFigures[ib];
+    if (!a || !b) return false;
+
+    this.pushHistory();
+    const results = applyBoolean(a, b, op);
+    // Remove the two source figures (higher index first to keep indices valid).
+    const [hi, lo] = ia > ib ? [ia, ib] : [ib, ia];
+    this.committedFigures.splice(hi, 1);
+    this.committedFigures.splice(lo, 1);
+
+    // Insert results at the lo position.
+    if (results.length > 0) {
+      this.committedFigures.splice(lo, 0, ...results);
+    }
+
+    // Fix up groups and selection.
+    this.groups = this.groups
+      .map(g => g.filter(i => i !== hi && i !== lo).map(i => (i > hi ? i - 1 : i > lo ? i - 1 : i)))
+      .filter(g => g.length > 0);
+
+    if (results.length > 0) {
+      this.setSelection(results.map((_, k) => lo + k));
+    } else {
+      this.clearSelection();
+    }
+    this.emit('groupsChanged', this.groups);
+    this.emitCommitted();
+    this.persistIfEnabled();
+    return true;
   }
 
   updateDraft(update: Partial<DraftState>) {
@@ -302,6 +577,7 @@ class StateManager {
       opacity: this.draft.opacity,
       rotation: this.draft.rotation,
       zIndex: this.draft.zIndex,
+      radius: this.draft.radius,
     };
     
     this.committedFigures.push(newFigure);
@@ -319,6 +595,15 @@ class StateManager {
   removeFigure(index: number) {
     this.pushHistory();
     this.committedFigures.splice(index, 1);
+    // Fix up selection indices and drop groups referencing the removed figure.
+    this.selectedIndices = this.selectedIndices
+      .filter(i => i !== index)
+      .map(i => (i > index ? i - 1 : i));
+    this.groups = this.groups
+      .map(g => g.filter(i => i !== index).map(i => (i > index ? i - 1 : i)))
+      .filter(g => g.length > 0);
+    this.emit('selectionChanged', { indices: this.selectedIndices });
+    this.emit('groupsChanged', this.groups);
     this.emitCommitted();
     this.persistIfEnabled();
   }
@@ -329,7 +614,23 @@ class StateManager {
     if (toIndex < 0 || toIndex >= this.committedFigures.length) return;
     this.pushHistory();
     const [moved] = this.committedFigures.splice(fromIndex, 1);
+    if (!moved) return;
     this.committedFigures.splice(toIndex, 0, moved);
+    // Fix up selection + group indices after the reorder.
+    this.selectedIndices = this.selectedIndices.map(i => {
+      if (i === fromIndex) return toIndex;
+      if (fromIndex < toIndex && i > fromIndex && i <= toIndex) return i - 1;
+      if (fromIndex > toIndex && i >= toIndex && i < fromIndex) return i + 1;
+      return i;
+    });
+    this.groups = this.groups.map(g => g.map(i => {
+      if (i === fromIndex) return toIndex;
+      if (fromIndex < toIndex && i > fromIndex && i <= toIndex) return i - 1;
+      if (fromIndex > toIndex && i >= toIndex && i < fromIndex) return i + 1;
+      return i;
+    }));
+    this.emit('selectionChanged', { indices: this.selectedIndices });
+    this.emit('groupsChanged', this.groups);
     this.emitCommitted();
     this.persistIfEnabled();
   }
@@ -337,6 +638,10 @@ class StateManager {
   clearAll() {
     this.pushHistory();
     this.committedFigures = [];
+    this.selectedIndices = [];
+    this.groups = [];
+    this.emit('selectionChanged', { indices: [] });
+    this.emit('groupsChanged', this.groups);
     this.emitCommitted();
     this.persistIfEnabled();
   }
@@ -345,6 +650,10 @@ class StateManager {
   loadFigures(figures: Figure[]) {
     this.pushHistory();
     this.committedFigures = figures;
+    this.selectedIndices = [];
+    this.groups = [];
+    this.emit('selectionChanged', { indices: [] });
+    this.emit('groupsChanged', this.groups);
     this.emitCommitted();
     this.persistIfEnabled();
   }

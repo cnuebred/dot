@@ -6,6 +6,7 @@ import { stripVersion, FORMAT_VERSION } from '../shared/format';
 export interface PayloadValidationResult {
   success: true;
   body: unknown;
+  version: number;
 }
 
 export interface PayloadValidationError {
@@ -41,10 +42,10 @@ export function validateAndDecodePayload(payload: unknown): PayloadValidationOut
     return { success: false, error: `Unsupported format version: v${parsed.version}` };
   }
 
-  const validation = validatePayload(parsed.body);
+  const validation = validatePayload(parsed.body, parsed.version);
   if (!validation.isValid) {
     return { success: false, error: validation.error || 'Invalid icon data' };
   }
 
-  return { success: true, body: parsed.body };
+  return { success: true, body: parsed.body, version: parsed.version };
 }

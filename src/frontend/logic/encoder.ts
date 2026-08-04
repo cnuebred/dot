@@ -1,11 +1,12 @@
 import * as fflate from 'fflate';
 import type { Figure } from './stateManager';
 import { toHex, toHex2, toHex3 } from './math';
+import { encodeCoord } from '../../shared/coords';
 import { withVersion } from '../../shared/format';
 
 /**
  * Generates an uncompressed RAW link (plain text, no Base64URL/compression).
- * Format: v5:<block1><block2>... where each block is 12 hex characters.
+ * Format: v7:<block1><block2>... where each block is 17 hex characters.
  * Useful for debugging and inspecting the icon structure.
  */
 export function encodeStateRaw(figures: Figure[]): string {
@@ -14,16 +15,17 @@ export function encodeStateRaw(figures: Figure[]): string {
   let body = "";
   for (const fig of figures) {
     body += 
-      toHex(fig.x1) + 
-      toHex(fig.y1) + 
+      encodeCoord(fig.x1) + 
+      encodeCoord(fig.y1) + 
       fig.type + 
-      toHex(fig.p1) + 
-      toHex(fig.p2) +
+      encodeCoord(fig.p1) + 
+      encodeCoord(fig.p2) +
       toHex3(fig.color) +
       toHex(fig.weight) +
       toHex(fig.opacity ?? 15) +
       toHex(fig.rotation ?? 0) +
-      toHex(fig.zIndex ?? 0);
+      toHex(fig.zIndex ?? 0) +
+      toHex(fig.radius ?? 0);
   }
 
   return withVersion(body);
@@ -31,30 +33,30 @@ export function encodeStateRaw(figures: Figure[]): string {
 
 /**
  * Encodes a figure array into a compressed Base64URL string.
- * v5 block format (12 chars): [X1][Y1][TYPE][X2][Y2][C1][C2][C3][W][OP][RO][ZX]
- *   C1C2C3 = 12-bit color index (000-fff), OP = opacity (0-f),
- *   RO = rotation (0-f), ZX = z-index (0-f)
- * Before compression, data is prefixed with a version preamble (e.g. `v5:`),
- * allowing the backend to unambiguously identify the format version
- * and reject unknown/old payloads.
+ * v7 block format (17 chars):
+ *   [X1][X1][Y1][Y1][TYPE][X2][X2][Y2][Y2][C1][C2][C3][W][OP][RO][ZX][RD]
+ * Each coordinate is 2 hex chars with offset 128 → signed range -128..127,
+ * allowing shapes to extend beyond the 15×15 workspace.
+ * Before compression, data is prefixed with a version preamble (e.g. `v7:`).
  */
 export function encodeState(figures: Figure[]): string {
   if (figures.length === 0) return "";
 
-  // 1. Build text string (12-char v5 format)
+  // 1. Build text string (17-char v7 format)
   let body = "";
   for (const fig of figures) {
     body += 
-      toHex(fig.x1) + 
-      toHex(fig.y1) + 
+      encodeCoord(fig.x1) + 
+      encodeCoord(fig.y1) + 
       fig.type + 
-      toHex(fig.p1) + 
-      toHex(fig.p2) +
+      encodeCoord(fig.p1) + 
+      encodeCoord(fig.p2) +
       toHex3(fig.color) +
       toHex(fig.weight) +
       toHex(fig.opacity ?? 15) +
       toHex(fig.rotation ?? 0) +
-      toHex(fig.zIndex ?? 0);
+      toHex(fig.zIndex ?? 0) +
+      toHex(fig.radius ?? 0);
   }
 
   const payload = withVersion(body);

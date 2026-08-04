@@ -1,10 +1,13 @@
 import { getColorByIndex, getPaletteId, getColorIndex } from '../shared/palette';
 import { getLineCap, hasArrowhead, arrowheadPoints, strokeWidth } from '../shared/toolEndings';
+import { decodeCoord } from '../shared/coords';
 
 export interface CompileOptions {
   /** Gdy ustawione, dodaje nieprzezroczyste tło (przydatne dla faviconów w niektórych przeglądarkach). */
   faviconBackground?: string;
-  isPreview?: boolean
+  isPreview?: boolean;
+  /** Format version. Must be provided for v7 (block length is ambiguous via modulo). */
+  version?: number;
 }
 
 /**
@@ -27,11 +30,22 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
   const BLOCK_V3 = 8;
   const BLOCK_V4 = 11;
   const BLOCK_V5 = 12;
-  const blockLen = text.length % BLOCK_V5 === 0 ? BLOCK_V5
-    : text.length % BLOCK_V4 === 0 ? BLOCK_V4
-    : BLOCK_V3;
+  const BLOCK_V6 = 13;
+  const BLOCK_V7 = 17;
+
+  const isV7 = options.version === 7;
+  let blockLen: number;
+  if (isV7) {
+    blockLen = BLOCK_V7;
+  } else {
+    blockLen = text.length % BLOCK_V6 === 0 ? BLOCK_V6
+      : text.length % BLOCK_V5 === 0 ? BLOCK_V5
+      : text.length % BLOCK_V4 === 0 ? BLOCK_V4
+      : BLOCK_V3;
+  }
   const isV4 = blockLen === BLOCK_V4;
   const isV5 = blockLen === BLOCK_V5;
+  const isV6 = blockLen === BLOCK_V6;
 
   // 16×16 grid – coordinates 0-15. ViewBox is 15×15 so the 0-15 range fills the
   // whole viewport (16 points edge-to-edge, perfectly centered).
@@ -47,23 +61,42 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
 
   for (let i = 0; i < text.length; i += blockLen) {
     const block = text.substring(i, i + blockLen);
-    const x1 = parseInt(block[0]!, 16) + additionalPadding;
-    const y1 = parseInt(block[1]!, 16) + additionalPadding;
-    const type = block[2]!;
-    const x2 = parseInt(block[3]!, 16) + additionalPadding;
-    const y2 = parseInt(block[4]!, 16) + additionalPadding;
-    // v5: 3 hex chars (12-bit color), v3/v4: 2 hex chars (8-bit color)
-    const colorIndex = isV5
-      ? parseInt(block.substring(5, 8), 16)
-      : parseInt(block.substring(5, 7), 16);
-    const weightOffset = isV5 ? 8 : 7;
-    const weight = parseInt(block[weightOffset]!, 16);
 
-    // v4/v5: extra fields
-    const extOffset = isV5 ? 9 : 8;
-    const opacity = (isV4 || isV5) ? parseInt(block[extOffset]!, 16) / 15 : 1.0;
-    const rotation = (isV4 || isV5) ? parseInt(block[extOffset + 1]!, 16) * 22.5 : 0;
-    const zIndex = (isV4 || isV5) ? parseInt(block[extOffset + 2]!, 16) : 0;
+    let x1: number, y1: number, type: string, x2: number, y2: number;
+    let colorIndex: number, weight: number, opacity: number, rotation: number, zIndex: number, radius: number;
+
+    if (isV7) {
+      // v7: coords are 2 hex chars with offset; type at index 4.
+      x1 = decodeCoord(block.substring(0, 2)) + additionalPadding;
+      y1 = decodeCoord(block.substring(2, 4)) + additionalPadding;
+      type = block[4]!;
+      x2 = decodeCoord(block.substring(5, 7)) + additionalPadding;
+      y2 = decodeCoord(block.substring(7, 9)) + additionalPadding;
+      colorIndex = parseInt(block.substring(9, 12), 16);
+      weight = parseInt(block[12]!, 16);
+      opacity = parseInt(block[13]!, 16) / 15;
+      rotation = parseInt(block[14]!, 16) * 22.5;
+      zIndex = parseInt(block[15]!, 16);
+      radius = parseInt(block[16]!, 16);
+    } else {
+      x1 = parseInt(block[0]!, 16) + additionalPadding;
+      y1 = parseInt(block[1]!, 16) + additionalPadding;
+      type = block[2]!;
+      x2 = parseInt(block[3]!, 16) + additionalPadding;
+      y2 = parseInt(block[4]!, 16) + additionalPadding;
+      // v5/v6: 3 hex chars (12-bit color), v3/v4: 2 hex chars (8-bit color)
+      colorIndex = (isV5 || isV6)
+        ? parseInt(block.substring(5, 8), 16)
+        : parseInt(block.substring(5, 7), 16);
+      weight = parseInt((isV5 || isV6 ? block[8]! : block[7]!), 16);
+      // v4/v5/v6: extra fields
+      const extOffset = (isV5 || isV6) ? 9 : 8;
+      opacity = (isV4 || isV5 || isV6) ? parseInt(block[extOffset]!, 16) / 15 : 1.0;
+      rotation = (isV4 || isV5 || isV6) ? parseInt(block[extOffset + 1]!, 16) * 22.5 : 0;
+      zIndex = (isV4 || isV5 || isV6) ? parseInt(block[extOffset + 2]!, 16) : 0;
+      // v6: radius (rounded corners)
+      radius = isV6 ? parseInt(block[extOffset + 3]!, 16) : 0;
+    }
 
     const isFilled = type !== 'l' && type === type.toUpperCase();
     const color = getColorByIndex(colorIndex);
@@ -83,7 +116,22 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
         d = `M ${x1} ${y1} L ${x2} ${y2}`;
         break;
       case 'r': // Rectangle: opposite corners (x1,y1) and (x2,y2)
-        d = `M ${x1} ${y1} H ${x2} V ${y2} H ${x1} Z`;
+        if (radius > 0) {
+          const r = Math.min(radius / 15 * 7.5, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2);
+          const rx = Math.min(r, Math.abs(x2 - x1) / 2);
+          const ry = Math.min(r, Math.abs(y2 - y1) / 2);
+          d = `M ${x1 + rx} ${y1} ` +
+              `H ${x2 - rx} ` +
+              `A ${rx} ${ry} 0 0 1 ${x2} ${y1 + ry} ` +
+              `V ${y2 - ry} ` +
+              `A ${rx} ${ry} 0 0 1 ${x2 - rx} ${y2} ` +
+              `H ${x1 + rx} ` +
+              `A ${rx} ${ry} 0 0 1 ${x1} ${y2 - ry} ` +
+              `V ${y1 + ry} ` +
+              `A ${rx} ${ry} 0 0 1 ${x1 + rx} ${y1} Z`;
+        } else {
+          d = `M ${x1} ${y1} H ${x2} V ${y2} H ${x1} Z`;
+        }
         break;
       case 'c': { // Circle: inscribed in rectangle (x1,y1)-(x2,y2)
         const cx = (x1 + x2) / 2;
@@ -152,7 +200,7 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
     ? `<rect width="${sizeWithPadding}" height="${sizeWithPadding}" fill="${options.faviconBackground}" />\n  `
     : '';
 
-  // If there are knockout figures, wrap normal ones in <g mask="url(#knockout)">
+  // If there are knockout figures, add a mask and wrap normal ones in a group.
   let knockoutMask = '';
   let wrappedShapes = shapes;
   if (knockoutParts.length > 0) {
@@ -163,17 +211,21 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
         .replace(/opacity="[^"]*"/, '');
     }).join('\n    ');
     knockoutMask = `
-  <defs>
     <mask id="${maskId}">
       <rect width="${sizeWithPadding}" height="${sizeWithPadding}" fill="white" />
       ${knockoutPaths}
-    </mask>
-  </defs>`;
-    wrappedShapes = `  <g mask="url(#${maskId})">\n  ${shapes}\n  </g>`;
+    </mask>`;
+    wrappedShapes = `  <g mask="url(#${maskId})" clip-path="url(#workspace-clip)">\n  ${shapes}\n  </g>`;
+  } else {
+    wrappedShapes = `  <g clip-path="url(#workspace-clip)">\n  ${shapes}\n  </g>`;
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="1024" height="1024" viewBox="0 0 ${sizeWithPadding} ${sizeWithPadding}" xmlns="http://www.w3.org/2000/svg" overflow="visible">
-  ${knockoutMask}${background}${wrappedShapes}
+  <defs>
+    <clipPath id="workspace-clip">
+      <rect width="${sizeWithPadding}" height="${sizeWithPadding}" />
+    </clipPath>${knockoutMask}
+  </defs>${background}${wrappedShapes}
 </svg>`;
 }

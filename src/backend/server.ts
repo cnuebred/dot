@@ -98,7 +98,7 @@ async function readJsonBody<T = any>(req: Request): Promise<T | null> {
 function renderIcon(payload: string, faviconBackground?: string, isPreview?: boolean): string | null {
   const result = validateAndDecodePayload(payload);
   if (!result.success) return null;
-  return compileToSvg(result.body as string, { faviconBackground, isPreview });
+  return compileToSvg(result.body as string, { faviconBackground, isPreview, version: result.version });
 }
 
 /** Simple HTML special character escaping for safely embedding payloads in attributes/text. */
@@ -350,7 +350,7 @@ Bun.serve({
         return fallbackResponse();
       }
 
-      const validation = validatePayload(parsed.body);
+      const validation = validatePayload(parsed.body, parsed.version);
       if (!validation.isValid) return fallbackResponse();
 
       const faviconMode = url.searchParams.get('mode') === 'favicon' || url.searchParams.has('favicon');
@@ -365,7 +365,7 @@ Bun.serve({
 
       try {
         const startTime = Date.now();
-        const svg = compileToSvg(parsed.body, { faviconBackground: faviconBg, isPreview: previewMode });
+        const svg = compileToSvg(parsed.body, { faviconBackground: faviconBg, isPreview: previewMode, version: parsed.version });
         if (!svg) return fallbackResponse();
 
         let body: BodyInit = svg;

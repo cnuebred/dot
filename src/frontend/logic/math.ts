@@ -15,6 +15,19 @@ export function getGridPos(offsetX: number, offsetY: number, size: number): { x:
   };
 }
 
+/**
+ * Like getGridPos but WITHOUT clamping to 0-15. Used for moving shapes beyond
+ * the workspace edge (v7): the shape may extend past the 15×15 canvas, and
+ * the overflow is clipped during rendering.
+ */
+export function getGridPosUnclamped(offsetX: number, offsetY: number, size: number): { x: number, y: number } {
+  const cellSize = size / 15;
+  return {
+    x: Math.round(offsetX / cellSize),
+    y: Math.round(offsetY / cellSize),
+  };
+}
+
 export function toHex(val: number): string {
   return val.toString(16).toLowerCase();
 }

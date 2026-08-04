@@ -14,9 +14,12 @@ const TOOL_KEYS: Record<string, ToolBase> = {
  * Registers global editor keyboard shortcuts:
  *  1-5         - tool selection (line/rectangle/circle/triangle/arc)
  *  F           - fill toggle
- *  Delete      - delete last figure
+ *  Delete      - delete selected figures (or last figure when none selected)
  *  Ctrl+Z      - undo
  *  Ctrl+Shift+Z - redo
+ *  Ctrl/Cmd+C  - copy selection
+ *  Ctrl/Cmd+V  - paste clipboard
+ *  Ctrl/Cmd+D  - duplicate selection
  *  Ctrl/Cmd+E  - open export modal
  *
  * Returns a cleanup function (call when leaving the editor view).
@@ -38,27 +41,52 @@ export function initKeyboardShortcuts(): () => void {
       return;
     }
 
+    const mod = e.ctrlKey || e.metaKey;
+
     // Ctrl+Shift+Z = Redo (check before Ctrl+Z)
-    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'z') {
+    if (mod && e.shiftKey && e.key.toLowerCase() === 'z') {
       e.preventDefault();
       stateManager.redo();
       return;
     }
 
     // Ctrl+Z = Undo
-    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+    if (mod && !e.shiftKey && e.key.toLowerCase() === 'z') {
       e.preventDefault();
       stateManager.undo();
       return;
     }
 
-    if (e.key === 'Delete' || e.key === 'Backspace') {
+    // Copy / Paste / Duplicate / Group / Ungroup
+    if (mod && e.key.toLowerCase() === 'c') {
       e.preventDefault();
-      stateManager.removeFigure(stateManager.committedFigures.length - 1);
+      stateManager.copySelection();
+      return;
+    }
+    if (mod && e.key.toLowerCase() === 'v') {
+      e.preventDefault();
+      stateManager.pasteClipboard();
+      return;
+    }
+    if (mod && e.key.toLowerCase() === 'd') {
+      e.preventDefault();
+      stateManager.duplicateSelection();
       return;
     }
 
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'e') {
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault();
+      if (stateManager.selectedIndices.length > 0) {
+        // Delete selected figures (highest index first to keep indices valid).
+        const toDelete = [...stateManager.selectedIndices].sort((a, b) => b - a);
+        for (const idx of toDelete) stateManager.removeFigure(idx);
+      } else {
+        stateManager.removeFigure(stateManager.committedFigures.length - 1);
+      }
+      return;
+    }
+
+    if (mod && e.key.toLowerCase() === 'e') {
       e.preventDefault();
       document.body.appendChild(new ExportModal().render());
       return;

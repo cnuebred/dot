@@ -20,6 +20,9 @@ export class LayerPanel {
     this.unsubs.push(stateManager.subscribe('figureHighlighted', (fig: Figure) => {
       this.highlightSvgElement(fig);
     }));
+    this.unsubs.push(stateManager.subscribe('selectionChanged', () => {
+      this.renderLayers(stateManager.committedFigures);
+    }));
     this.renderLayers(stateManager.committedFigures);
     return () => {
       for (const unsub of this.unsubs) unsub();
@@ -62,9 +65,17 @@ export class LayerPanel {
     figures.forEach((fig, index) => {
       const item = document.createElement('li');
       item.className = 'layer-item' + (fig.opacity === 0 ? ' erase-mode' : '');
+      if (stateManager.selectedIndices.includes(index)) item.classList.add('selected');
       item.draggable = true;
       item.dataset.index = String(index);
-      item.onclick = () => stateManager.highlight(fig);
+      item.onclick = (e: MouseEvent) => {
+        if (e.shiftKey) {
+          stateManager.toggleSelection(index);
+        } else {
+          stateManager.setSelection([index]);
+          stateManager.highlight(fig);
+        }
+      };
 
       // Drag & drop
       item.ondragstart = (e: DragEvent) => {

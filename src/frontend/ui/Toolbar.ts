@@ -263,6 +263,30 @@ export class Toolbar {
     zIndexGroup.append(zIndexSlider, zIndexLabel);
     container.appendChild(zIndexGroup);
 
+    // --- Radius (rounded corners) ---
+    const radiusGroup = document.createElement('div');
+    radiusGroup.className = 'tool-group';
+    radiusGroup.innerHTML = `<label>Radius</label>`;
+
+    const radiusSlider = document.createElement('input');
+    radiusSlider.type = 'range';
+    radiusSlider.min = '0';
+    radiusSlider.max = '15';
+    radiusSlider.value = String(stateManager.currentRadius);
+    radiusSlider.className = 'weight-slider';
+    radiusSlider.oninput = () => {
+      const val = parseInt(radiusSlider.value);
+      radiusLabel.textContent = String(val);
+      stateManager.setRadius(val);
+    };
+
+    const radiusLabel = document.createElement('span');
+    radiusLabel.className = 'weight-value';
+    radiusLabel.textContent = String(stateManager.currentRadius);
+
+    radiusGroup.append(radiusSlider, radiusLabel);
+    container.appendChild(radiusGroup);
+
     // Color selection (64-color palette)
     container.appendChild(new ColorPicker().render());
 
@@ -297,8 +321,8 @@ export class Toolbar {
     shortcutsGroup.innerHTML = `
       <label>Shortcuts</label>
       <p class="shortcuts-hint">
-        <kbd>1-5</kbd> tool · <kbd>F</kbd> fill toggle ·
-        <kbd>Del</kbd> delete last figure · <kbd>Ctrl+E</kbd> export
+        <kbd>1-5</kbd> tool · <kbd>F</kbd> fill · <kbd>Del</kbd> delete ·
+        <kbd>Ctrl+C/V/D</kbd> copy/paste/dup · <kbd>Ctrl+E</kbd> export
       </p>
     `;
     container.appendChild(shortcutsGroup);

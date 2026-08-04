@@ -34,7 +34,7 @@ export function renderCommittedSvg(svg: SVGSVGElement, figures: Figure[]): void 
     const lineCap = getLineCap(fig.type);
 
     const path = document.createElementNS(SVG_NS, 'path') as SVGPathElement;
-    path.setAttribute('d', buildPath(baseType, x1, y1, x2, y2));
+    path.setAttribute('d', buildPath(baseType, x1, y1, x2, y2, fig.radius ?? 0));
     path.setAttribute('stroke', isFilled ? 'none' : color);
     path.setAttribute('fill', isFilled ? color : 'none');
     path.setAttribute('stroke-width', strokeWidthStr);
@@ -72,13 +72,26 @@ export function renderCommittedSvg(svg: SVGSVGElement, figures: Figure[]): void 
   const normal = parts.filter((p) => !p.isKnockout);
   const knockout = parts.filter((p) => p.isKnockout);
 
+  // Clip everything to the 15×15 workspace so shapes cannot visually
+  // overflow the canvas edge (e.g. rotated corners or thick strokes).
+  const defs = document.createElementNS(SVG_NS, 'defs');
+  const clip = document.createElementNS(SVG_NS, 'clipPath');
+  clip.setAttribute('id', 'workspace-clip');
+  const clipRect = document.createElementNS(SVG_NS, 'rect');
+  clipRect.setAttribute('width', '15');
+  clipRect.setAttribute('height', '15');
+  clip.appendChild(clipRect);
+  defs.appendChild(clip);
+
   if (knockout.length === 0) {
-    for (const p of normal) svg.appendChild(p.el);
+    const clipGroup = document.createElementNS(SVG_NS, 'g');
+    clipGroup.setAttribute('clip-path', 'url(#workspace-clip)');
+    for (const p of normal) clipGroup.appendChild(p.el);
+    svg.append(defs, clipGroup);
     return;
   }
 
   // Knockout: wrap normal shapes in a mask group.
-  const defs = document.createElementNS(SVG_NS, 'defs');
   const mask = document.createElementNS(SVG_NS, 'mask');
   mask.setAttribute('id', 'knockout-mask');
   const bgRect = document.createElementNS(SVG_NS, 'rect');
@@ -100,6 +113,7 @@ export function renderCommittedSvg(svg: SVGSVGElement, figures: Figure[]): void 
 
   const g = document.createElementNS(SVG_NS, 'g');
   g.setAttribute('mask', 'url(#knockout-mask)');
+  g.setAttribute('clip-path', 'url(#workspace-clip)');
   for (const p of normal) g.appendChild(p.el);
 
   svg.append(defs, g);

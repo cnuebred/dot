@@ -413,6 +413,42 @@ body {
     min-width: 32px;
 }
 
+/* Selected layer state */
+.layer-item.selected {
+    background: var(--accent);
+    border: 1px solid var(--accent-hover);
+    color: #fff;
+}
+
+.layer-item.selected .layer-color-swatch {
+    border-color: #fff;
+}
+
+/* Edit Selection action buttons (align / distribute / flip / group) */
+.action-row {
+    display: flex;
+    gap: 0.25rem;
+    margin-bottom: 0.25rem;
+}
+
+.action-btn {
+    flex: 1;
+    padding: 0.35rem 0;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-main);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.action-btn:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
 /* Modal */
 .modal-overlay {
     position: fixed;
