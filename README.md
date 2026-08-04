@@ -36,7 +36,7 @@
 ### Installation
 
 ```bash
-git clone https://github.com/your-org/dot.git
+git clone https://github.com/cnuebred/dot.git
 cd dot
 bun install
 ```
