@@ -49,6 +49,14 @@ const MIME_TYPES: Record<string, string> = {
 
 const PAYLOAD_CHAR_REGEX = /^[A-Za-z0-9_-]{1,512}$/;
 
+/**
+ * Maximum canvas max-coordinate that may be rendered by the backend.
+ * 16×16 (15) and 32×32 (31) are hotlinkable. 64×64 (63) and 128×128 (127) are
+ * client-only – server-side rendering would be too expensive, so their
+ * hotlink / raw / favicon / API rendering is rejected.
+ */
+const MAX_HOTLINK_SIZE = 31;
+
 const FALLBACK_HEADERS = { 'Content-Type': 'image/svg+xml', ...getAssetSecurityHeaders() };
 
 /** Wraps a Promise with a timeout – throws after `ms` milliseconds. */
@@ -119,6 +127,9 @@ async function readJsonBody<T = any>(req: Request): Promise<T | null> {
 function renderIcon(payload: string, faviconBackground?: string, isPreview?: boolean): string | null {
   const result = validateAndDecodePayload(payload);
   if (!result.success) return null;
+  // Large canvases (64/128) are client-only: rendering them server-side is too
+  // expensive, so hotlink/API rendering is rejected for size > 31.
+  if ((result.size ?? 15) > MAX_HOTLINK_SIZE) return null;
   return compileToSvg(result.body as string, {
     faviconBackground,
     isPreview,
@@ -379,6 +390,9 @@ Bun.serve({
       if (!parsed || parsed.version < 3 || parsed.version > FORMAT_VERSION) {
         return fallbackResponse();
       }
+
+      // Large canvases (64/128) are client-only – reject server-side rendering.
+      if ((parsed.size ?? 15) > MAX_HOTLINK_SIZE) return fallbackResponse();
 
       const validation = validatePayload(parsed.body, parsed.version);
       if (!validation.isValid) return fallbackResponse();

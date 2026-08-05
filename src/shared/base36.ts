@@ -53,3 +53,34 @@ export function decode36(ch: string): number {
   const idx = BASE36_DIGITS.indexOf(ch);
   return idx >= 0 ? idx : -1;
 }
+
+/**
+ * ── Wide coordinates (for 64×64 / 128×128 canvases) ──
+ *
+ * The single base-36 digit above only reaches 35, which covers up to the 32×32
+ * canvas (coords 0-31). Larger canvases (64×64 → 0-63, 128×128 → 0-127) need a
+ * WIDER coordinate. We use TWO base-36 chars per coordinate: high digit * 36 +
+ * low digit → range 0-1295, comfortably covering 0-127. Effect fields
+ * (weight/opacity/rotation/zIndex/radius) stay single base-36 (0-35).
+ *
+ * These wide blocks are used ONLY in the RAW text payload for 64/128 canvases,
+ * which is client-side export/import only — the backend rejects size > 31, so
+ * it never has to parse a wide block.
+ */
+
+/** Encodes a coordinate as TWO base-36 chars (value 0-1295). Clamps to range. */
+export function encode36Wide(v: number): string {
+  const c = Math.max(0, Math.min(1295, Math.round(v)));
+  const hi = Math.floor(c / 36);
+  const lo = c % 36;
+  return BASE36_DIGITS[hi]! + BASE36_DIGITS[lo]!;
+}
+
+/** Decodes a TWO-char base-36 coordinate to its value (0-1295), or -1 if invalid. */
+export function decode36Wide(ch2: string): number {
+  if (ch2.length !== 2) return -1;
+  const hi = decode36(ch2[0]!);
+  const lo = decode36(ch2[1]!);
+  if (hi < 0 || lo < 0) return -1;
+  return hi * 36 + lo;
+}

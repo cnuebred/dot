@@ -41,12 +41,12 @@ export class ExportModal {
     const title = document.createElement('h2');
     title.textContent = 'Export Icon';
 
-    // 16×16 and 32×32 are stateless (fit base-36 coord range); 64/128 are
-    // client-only – they cannot be encoded into a stateless URL, so all
-    // backend/hotlink features are disabled.
+    // 16×16 and 32×32 are stateless (fit base-36 coord range) → full hotlink.
+    // 64/128 are client-only: no backend hotlink, but they CAN be shared as a
+    // RAW (uncompressed text) link which the editor can export/import.
     const stateless = stateManager.isStateless();
     const payload = stateless ? encodeCommittedState() : '';
-    const rawPayload = stateless ? encodeStateRaw(stateManager.committedFigures, stateManager.canvasSize) : '';
+    const rawPayload = encodeStateRaw(stateManager.committedFigures, stateManager.canvasSize);
     const url = payload ? `${window.location.origin}/r/${payload}` : '';
     const rawUrl = rawPayload ? `${window.location.origin}/raw/${rawPayload}` : '';
     const faviconUrl = payload ? `${window.location.origin}/favicon/${payload}` : '';
@@ -101,7 +101,7 @@ export class ExportModal {
     notice.className = 'export-client-only';
     notice.style.cssText = 'font-size:0.82rem;color:#f59e0b;margin:0.25rem 0;';
     if (!stateless) {
-      notice.textContent = `This ${stateManager.maxCoord + 1}×${stateManager.maxCoord + 1} canvas is client-only – hotlink, favicon, RAW link and Gallery publish are disabled.`;
+      notice.textContent = `This ${stateManager.maxCoord + 1}×${stateManager.maxCoord + 1} canvas is client-only – backend hotlink, favicon and Gallery publish are disabled. Use the RAW link below to save / re-import the project.`;
     }
 
     const actions = document.createElement('div');
@@ -211,14 +211,12 @@ export class ExportModal {
     rawInput.readOnly = true;
     rawInput.style.fontSize = '0.75rem';
     rawInput.style.opacity = '0.7';
-    if (!stateless) rawInput.disabled = true;
 
     const copyRawBtn = document.createElement('button');
     copyRawBtn.className = 'btn-primary';
     copyRawBtn.textContent = 'Copy RAW Link';
     copyRawBtn.style.fontSize = '0.8rem';
     copyRawBtn.style.padding = '0.35rem 0.75rem';
-    copyRawBtn.disabled = !stateless;
     copyRawBtn.onclick = () => {
       copyText(rawInput.value);
       copyRawBtn.textContent = 'Copied!';

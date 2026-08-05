@@ -3,6 +3,7 @@ import type { ToolBase } from '../logic/stateManager';
 import { ExportModal } from './ExportModal';
 import { ColorPicker } from './ColorPicker';
 import { decodeState } from '../logic/decoder';
+import { encodeStateRaw } from '../logic/encoder';
 import { encodeCommittedState } from '../logic/encodeMemo';
 import { PALETTE_META } from '../../shared/palette';
 
@@ -408,21 +409,21 @@ export class Toolbar {
 
     // Funkcja aktualizująca input z bieżącego stanu canvasu
     const updateImportInput = () => {
-      // Larger canvases (64/128) are client-only – no stateless URL to show.
-      if (!stateManager.isStateless()) {
-        importInput.value = '';
-        importInput.disabled = true;
-        importInput.placeholder = 'Hotlink unavailable for this canvas';
-        importStatus.textContent = '';
-        return;
-      }
       importInput.disabled = false;
-      importInput.placeholder = 'Paste link or payload...';
-      const encoded = encodeCommittedState();
-      if (encoded) {
-        importInput.value = `${window.location.origin}/r/${encoded}`;
+      if (stateManager.isStateless()) {
+        importInput.placeholder = 'Paste link or payload...';
+        const encoded = encodeCommittedState();
+        if (encoded) {
+          importInput.value = `${window.location.origin}/r/${encoded}`;
+        } else {
+          importInput.value = '';
+        }
       } else {
-        importInput.value = '';
+        // 64/128 canvases: no backend hotlink, but shareable as a RAW link.
+        importInput.placeholder = 'RAW link (client-only export)';
+        const raw = encodeStateRaw(stateManager.committedFigures, stateManager.canvasSize);
+        importInput.value = raw ? `${window.location.origin}/raw/${raw}` : '';
+        importStatus.textContent = '';
       }
     };
 
@@ -437,10 +438,13 @@ export class Toolbar {
       let payload = value;
       try {
         const url = new URL(value);
-        // /r/payload, /p/id, /i/payload
+        // /r/payload, /raw/payload, /p/id, /i/payload
         const pathParts = url.pathname.split('/').filter(Boolean);
         if (pathParts.length >= 2 && (pathParts[0] === 'r' || pathParts[0] === 'i')) {
           payload = pathParts[1]!;
+        } else if (pathParts.length >= 2 && pathParts[0] === 'raw') {
+          // /raw/<text payload> — reconstruct the raw payload (may contain ':').
+          payload = url.pathname.slice('/raw/'.length);
         } else if (url.searchParams.has('import')) {
           payload = url.searchParams.get('import')!;
         }

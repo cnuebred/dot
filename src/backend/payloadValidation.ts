@@ -21,6 +21,15 @@ export type PayloadValidationOutcome = PayloadValidationResult | PayloadValidati
 const PAYLOAD_CHAR_REGEX = /^[A-Za-z0-9_-]{1,512}$/;
 
 /**
+ * Canvases above this max coordinate are client-only (64/128). Their
+ * compressed payloads cannot be produced by the editor (`encodeState` returns
+ * empty for them), and the backend rejects rendering them anyway. This is the
+ * single gate for gallery / static links / batch so no un-renderable large
+ * payload is ever stored.
+ */
+const MAX_HOTLINK_SIZE = 31;
+
+/**
  * Validates and decodes an icon payload (Base64URL).
  * Used by gallery, staticLinks and potentially other modules.
  * Eliminates ~25 lines of duplication in each.
@@ -42,6 +51,10 @@ export function validateAndDecodePayload(payload: unknown): PayloadValidationOut
   // Accept v3..v8 (validator.ts handles all block formats)
   if (parsed.version < 3 || parsed.version > FORMAT_VERSION) {
     return { success: false, error: `Unsupported format version: v${parsed.version}` };
+  }
+  // Reject client-only large canvases.
+  if ((parsed.size ?? 15) > MAX_HOTLINK_SIZE) {
+    return { success: false, error: 'Canvas too large for hotlink' };
   }
 
   const validation = validatePayload(parsed.body, parsed.version);
