@@ -1,6 +1,7 @@
 import { stateManager } from '../logic/stateManager';
 import { encodeState, encodeStateRaw } from '../logic/encoder';
 import { encodeCommittedState } from '../logic/encodeMemo';
+import { renderCommittedSvgString } from '../logic/committedRenderer';
 
 /** Copies text to clipboard with a graceful fallback for non-secure contexts. */
 async function copyText(text: string): Promise<void> {
@@ -40,8 +41,12 @@ export class ExportModal {
     const title = document.createElement('h2');
     title.textContent = 'Export Icon';
 
-    const payload = encodeCommittedState();
-    const rawPayload = encodeStateRaw(stateManager.committedFigures);
+    // 16×16 and 32×32 are stateless (fit base-36 coord range); 64/128 are
+    // client-only – they cannot be encoded into a stateless URL, so all
+    // backend/hotlink features are disabled.
+    const stateless = stateManager.isStateless();
+    const payload = stateless ? encodeCommittedState() : '';
+    const rawPayload = stateless ? encodeStateRaw(stateManager.committedFigures, stateManager.canvasSize) : '';
     const url = payload ? `${window.location.origin}/r/${payload}` : '';
     const rawUrl = rawPayload ? `${window.location.origin}/raw/${rawPayload}` : '';
     const faviconUrl = payload ? `${window.location.origin}/favicon/${payload}` : '';
@@ -52,21 +57,30 @@ export class ExportModal {
 
     const preview = document.createElement('img');
     preview.className = 'export-preview';
-    preview.src = url;
+    if (stateless) {
+      preview.src = url;
+    } else {
+      // Client-side SVG data URL – no backend round-trip.
+      preview.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(renderCommittedSvgString());
+    }
     preview.alt = 'Icon preview';
 
     const faviconPreview = document.createElement('img');
     faviconPreview.className = 'export-favicon-preview';
-    faviconPreview.src = faviconUrl;
+    if (stateless) {
+      faviconPreview.src = faviconUrl;
+    } else {
+      faviconPreview.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(renderCommittedSvgString());
+    }
     faviconPreview.alt = 'Favicon preview 16×16';
     faviconPreview.width = 16;
     faviconPreview.height = 16;
 
     previewSection.append(preview, faviconPreview);
 
-    // Info o formacie v4
+    // Info o formacie v8
     const v4Figures = stateManager.committedFigures.filter(
-      f => f.opacity !== 15 || f.rotation !== 0 || f.zIndex !== 0
+      f => f.opacity !== 35 || f.rotation !== 0 || f.zIndex !== 0
     );
     const formatInfo = document.createElement('p');
     formatInfo.className = 'export-format-info';
@@ -80,6 +94,15 @@ export class ExportModal {
     hotlinkInput.className = 'input-field';
     hotlinkInput.value = url;
     hotlinkInput.readOnly = true;
+    if (!stateless) hotlinkInput.disabled = true;
+
+    // Client-only notice (64/128 canvases).
+    const notice = document.createElement('p');
+    notice.className = 'export-client-only';
+    notice.style.cssText = 'font-size:0.82rem;color:#f59e0b;margin:0.25rem 0;';
+    if (!stateless) {
+      notice.textContent = `This ${stateManager.maxCoord + 1}×${stateManager.maxCoord + 1} canvas is client-only – hotlink, favicon, RAW link and Gallery publish are disabled.`;
+    }
 
     const actions = document.createElement('div');
     actions.className = 'modal-actions';
@@ -87,6 +110,8 @@ export class ExportModal {
     const copyUrlBtn = document.createElement('button');
     copyUrlBtn.className = 'btn-primary';
     copyUrlBtn.textContent = 'Copy Hotlink';
+    copyUrlBtn.disabled = !stateless;
+    copyUrlBtn.title = stateless ? '' : 'Hotlink is disabled for client-only canvases';
     copyUrlBtn.onclick = () => {
       copyText(hotlinkInput.value);
       copyUrlBtn.textContent = 'Copied!';
@@ -97,8 +122,13 @@ export class ExportModal {
     copySvgBtn.className = 'btn-primary';
     copySvgBtn.textContent = 'Copy SVG Code';
     copySvgBtn.onclick = async () => {
-      const res = await fetch(url);
-      const svgText = await res.text();
+      let svgText: string;
+      if (stateless) {
+        const res = await fetch(url);
+        svgText = await res.text();
+      } else {
+        svgText = renderCommittedSvgString();
+      }
       await copyText(svgText);
       copySvgBtn.textContent = 'Copied!';
       setTimeout(() => (copySvgBtn.textContent = 'Copy SVG Code'), 2000);
@@ -108,8 +138,13 @@ export class ExportModal {
     downloadBtn.className = 'btn-primary';
     downloadBtn.textContent = 'Download SVG File';
     downloadBtn.onclick = async () => {
-      const res = await fetch(url);
-      const blob = await res.blob();
+      let blob: Blob;
+      if (stateless) {
+        const res = await fetch(url);
+        blob = await res.blob();
+      } else {
+        blob = new Blob([renderCommittedSvgString()], { type: 'image/svg+xml' });
+      }
       const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = objectUrl;
@@ -121,6 +156,8 @@ export class ExportModal {
     const downloadPngBtn = document.createElement('button');
     downloadPngBtn.className = 'btn-primary';
     downloadPngBtn.textContent = 'Download PNG';
+    downloadPngBtn.disabled = !stateless;
+    downloadPngBtn.title = stateless ? '' : 'PNG export requires the backend (disabled for client-only canvases)';
     downloadPngBtn.onclick = async () => {
       const pngUrl = `${url}?format=png`;
       const res = await fetch(pngUrl);
@@ -136,6 +173,8 @@ export class ExportModal {
     const copyFaviconSvgBtn = document.createElement('button');
     copyFaviconSvgBtn.className = 'btn-primary';
     copyFaviconSvgBtn.textContent = 'Copy <link> Tag for SVG Favicon';
+    copyFaviconSvgBtn.disabled = !stateless;
+    copyFaviconSvgBtn.title = stateless ? '' : 'Favicon requires the backend (disabled for client-only canvases)';
     copyFaviconSvgBtn.onclick = () => {
       const faviconSvgUrl = payload ? `${window.location.origin}/r/${payload}?favicon=1` : '';
       const tag = `<link rel="icon" type="image/svg+xml" href="${faviconSvgUrl}">`;
@@ -147,6 +186,8 @@ export class ExportModal {
     const copyFaviconIcoBtn = document.createElement('button');
     copyFaviconIcoBtn.className = 'btn-primary';
     copyFaviconIcoBtn.textContent = 'Copy Favicon ICO URL';
+    copyFaviconIcoBtn.disabled = !stateless;
+    copyFaviconIcoBtn.title = stateless ? '' : 'Favicon requires the backend (disabled for client-only canvases)';
     copyFaviconIcoBtn.onclick = () => {
       copyText(faviconUrl);
       copyFaviconIcoBtn.textContent = 'Copied!';
@@ -170,12 +211,14 @@ export class ExportModal {
     rawInput.readOnly = true;
     rawInput.style.fontSize = '0.75rem';
     rawInput.style.opacity = '0.7';
+    if (!stateless) rawInput.disabled = true;
 
     const copyRawBtn = document.createElement('button');
     copyRawBtn.className = 'btn-primary';
     copyRawBtn.textContent = 'Copy RAW Link';
     copyRawBtn.style.fontSize = '0.8rem';
     copyRawBtn.style.padding = '0.35rem 0.75rem';
+    copyRawBtn.disabled = !stateless;
     copyRawBtn.onclick = () => {
       copyText(rawInput.value);
       copyRawBtn.textContent = 'Copied!';
@@ -187,6 +230,8 @@ export class ExportModal {
     const publishBtn = document.createElement('button');
     publishBtn.className = 'btn-primary';
     publishBtn.textContent = 'Publish to Gallery';
+    publishBtn.disabled = !stateless;
+    publishBtn.title = stateless ? '' : 'Gallery publish requires the backend (disabled for client-only canvases)';
     publishBtn.onclick = async () => {
       const iconTitle = window.prompt('Enter icon name (optional):', '') ?? '';
       try {
@@ -215,7 +260,7 @@ export class ExportModal {
     closeBtn.style.marginTop = '1.5rem';
     closeBtn.onclick = () => overlay.remove();
 
-    content.append(title, previewSection, formatInfo, hotlinkInput, actions, closeBtn);
+    content.append(title, previewSection, formatInfo, notice, hotlinkInput, actions, closeBtn);
     overlay.appendChild(content);
     
     return overlay;

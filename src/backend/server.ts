@@ -119,7 +119,12 @@ async function readJsonBody<T = any>(req: Request): Promise<T | null> {
 function renderIcon(payload: string, faviconBackground?: string, isPreview?: boolean): string | null {
   const result = validateAndDecodePayload(payload);
   if (!result.success) return null;
-  return compileToSvg(result.body as string, { faviconBackground, isPreview, version: result.version });
+  return compileToSvg(result.body as string, {
+    faviconBackground,
+    isPreview,
+    version: result.version,
+    size: result.size,
+  });
 }
 
 /** Simple HTML special character escaping for safely embedding payloads in attributes/text. */
@@ -140,6 +145,10 @@ Bun.serve({
   // Defense-in-depth: hard cap on request body size (backed by readJsonBody's
   // 256 KB check on JSON endpoints). Returns 413 automatically.
   maxRequestBodySize: 512 * 1024,
+  // Safety net: if any handler ever hangs (e.g. an unguarded I/O path), fail
+  // fast instead of waiting for Bun's default 10s. Redis/SQLite call sites are
+  // individually bounded well under this so normal ops are never affected.
+  idleTimeout: 30,
   async fetch(req, server) {
     const url = new URL(req.url);
     const path = url.pathname;
@@ -386,7 +395,7 @@ Bun.serve({
 
       try {
         const startTime = Date.now();
-        const svg = compileToSvg(parsed.body, { faviconBackground: faviconBg, isPreview: previewMode, version: parsed.version });
+        const svg = compileToSvg(parsed.body, { faviconBackground: faviconBg, isPreview: previewMode, version: parsed.version, size: parsed.size });
         if (!svg) return fallbackResponse();
 
         let body: BodyInit = svg;

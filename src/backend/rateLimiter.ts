@@ -98,9 +98,20 @@ export class RedisRateLimitStore implements RateLimitStore {
     return this.prefix + k;
   }
 
+  /** Bounds a Redis command so a dead Redis degrades gracefully instead of hanging the request. */
+  private bounded<T>(p: Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Redis ratelimit timed out')), 1500);
+      p.then(
+        (v) => { clearTimeout(timer); resolve(v); },
+        (e) => { clearTimeout(timer); reject(e); }
+      );
+    });
+  }
+
   async get(key: string): Promise<{ count: number; resetAt: number } | null> {
     try {
-      const raw = await this.client.get(this.key(key));
+      const raw = await this.bounded(this.client.get(this.key(key)));
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       if (typeof parsed?.count !== 'number' || typeof parsed?.resetAt !== 'number') return null;
@@ -113,7 +124,7 @@ export class RedisRateLimitStore implements RateLimitStore {
   async set(key: string, count: number, resetAt: number): Promise<void> {
     try {
       const ttlSeconds = Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
-      await this.client.set(this.key(key), JSON.stringify({ count, resetAt }), 'EX', ttlSeconds);
+      await this.bounded(this.client.set(this.key(key), JSON.stringify({ count, resetAt }), 'EX', ttlSeconds));
     } catch {
       // Redis down – degrade gracefully (allow the request through).
     }

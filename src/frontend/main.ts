@@ -44,9 +44,11 @@ class App {
     const params = new URLSearchParams(window.location.search);
     const importPayload = params.get('import');
     if (importPayload) {
-      const figures = decodeState(importPayload);
-      if (figures && figures.length > 0) {
-        stateManager.loadFigures(figures);
+      const decoded = decodeState(importPayload);
+      if (decoded && decoded.figures.length > 0) {
+        // v8 payloads are self-describing: restore the canvas size too.
+        stateManager.setCanvasSize(decoded.size);
+        stateManager.loadFigures(decoded.figures);
         // Remove parameter from URL (without reload)
         const url = new URL(window.location.href);
         url.searchParams.delete('import');

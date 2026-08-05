@@ -479,6 +479,28 @@ body {
     margin: 1rem 0;
 }
 
+.input-field:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Canvas size selector (64/128 are client-only). */
+.canvas-size-select {
+    width: 100%;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    padding: 0.5rem;
+    font-family: var(--font-mono);
+    border-radius: 6px;
+}
+
+/* Disabled export/hotlink buttons for client-only canvases. */
+.btn-primary:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
 .export-preview {
     width: 128px;
     height: 128px;

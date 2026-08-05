@@ -71,7 +71,9 @@ export class ColorPicker {
 
       swatch.onclick = () => {
         const encodedColor = encodeColor(this.currentPaletteId, index);
-        stateManager.setColor(encodedColor);
+        // If figures are selected, recolor them; otherwise just set the
+        // active drawing color for the next figure.
+        stateManager.setColorForSelection(encodedColor);
         grid.querySelectorAll('.color-swatch').forEach(el => el.classList.remove('selected'));
         swatch.classList.add('selected');
       };

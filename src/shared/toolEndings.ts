@@ -39,19 +39,25 @@ export function isArcEnding(type: string): boolean {
   return (ARC_TOOLS as readonly string[]).includes(type.toLowerCase());
 }
 
-/** Line weight (0-15) → stroke width, shared by frontend and backend. */
+/**
+ * Line weight (0-35 canonical) → stroke width, shared by frontend and backend.
+ * Range 0.2 → 3.2. Legacy (v3-v7) weights (0-15) are rescaled to the canonical
+ * 0-35 scale before calling, so the min/max (and therefore legacy visuals) are
+ * preserved while v8 gets finer control.
+ */
 export function strokeWidth(weight: number): number {
-  return 0.2 + weight * 0.2;
+  const w = Math.max(0, Math.min(35, weight));
+  return 0.2 + w * (3.0 / 35);
 }
 
 /**
  * Effective radius of curvature for an arc figure (sharp ↔ flat).
  *
- * The `radius` field (0-15) is reused to control how "sharp" (deeply bent,
+ * The `radius` field (0-35 canonical) controls how "sharp" (deeply bent,
  * close to a semicircle) vs "flat" (close to a straight line) the arc is:
  *   - 0  → sharpest: keeps the legacy behavior `r = max(|dx|,|dy|,1)`, so old
  *          payloads render exactly as before (backward compatible).
- *   - 15 → flattest: the arc approaches a straight chord between the endpoints.
+ *   - 35 → flattest: the arc approaches a straight chord between the endpoints.
  *
  * Implementation uses sagitta (arc height) interpolation and recovers the
  * radius via `R = (D²/4 + h²)/(2h)`, which is always ≥ D/2, so the SVG arc
@@ -63,7 +69,7 @@ export function arcRadius(x1: number, y1: number, x2: number, y2: number, radius
   const D = Math.hypot(dx, dy);
   const rDefault = Math.max(Math.abs(dx), Math.abs(dy), 1);
   const hDefault = rDefault - Math.sqrt(Math.max(rDefault * rDefault - (D / 2) ** 2, 0));
-  const t = Math.max(0, Math.min(15, radiusField)) / 15;
+  const t = Math.max(0, Math.min(35, radiusField)) / 35;
   // Flat target: a tiny sagitta so the arc is nearly a straight line.
   const hFlat = Math.max(D, 1) * 0.002;
   const h = hDefault + (hFlat - hDefault) * t;

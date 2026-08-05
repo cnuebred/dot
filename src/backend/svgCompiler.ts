@@ -1,13 +1,16 @@
 import { getColorByIndex, getPaletteId, getColorIndex } from '../shared/palette';
 import { getLineCap, hasArrowhead, arrowheadPoints, strokeWidth, arcRadius } from '../shared/toolEndings';
 import { decodeCoord } from '../shared/coords';
+import { decode36, rescaleLegacyField } from '../shared/base36';
 
 export interface CompileOptions {
   /** Gdy ustawione, dodaje nieprzezroczyste tło (przydatne dla faviconów w niektórych przeglądarkach). */
   faviconBackground?: string;
   isPreview?: boolean;
-  /** Format version. Must be provided for v7 (block length is ambiguous via modulo). */
+  /** Format version. Must be provided for v7/v8 (block length is ambiguous via modulo). */
   version?: number;
+  /** Canvas max coordinate (for v8: 15=16×16, 31=32×32). Defaults to 15. */
+  size?: number;
 }
 
 /**
@@ -32,10 +35,14 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
   const BLOCK_V5 = 12;
   const BLOCK_V6 = 13;
   const BLOCK_V7 = 17;
+  const BLOCK_V8 = 13;
 
+  const isV8 = options.version === 8;
   const isV7 = options.version === 7;
   let blockLen: number;
-  if (isV7) {
+  if (isV8) {
+    blockLen = BLOCK_V8;
+  } else if (isV7) {
     blockLen = BLOCK_V7;
   } else {
     blockLen = text.length % BLOCK_V6 === 0 ? BLOCK_V6
@@ -47,10 +54,10 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
   const isV5 = blockLen === BLOCK_V5;
   const isV6 = blockLen === BLOCK_V6;
 
-  // 16×16 grid – coordinates 0-15. ViewBox is 15×15 so the 0-15 range fills the
-  // whole viewport (16 points edge-to-edge, perfectly centered).
+  // Grid – coordinates 0..size. ViewBox is "0 0 size size" so the 0-size range
+  // fills the whole viewport (points edge-to-edge, perfectly centered).
   const additionalPadding = 0;
-  const sizeWithPadding = 15;
+  const sizeWithPadding = options.size ?? 15;
 
   interface ShapePart {
     zIndex: number;
@@ -65,7 +72,20 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
     let x1: number, y1: number, type: string, x2: number, y2: number;
     let colorIndex: number, weight: number, opacity: number, rotation: number, zIndex: number, radius: number;
 
-    if (isV7) {
+    if (isV8) {
+      // v8: coords + effect fields are single base-36 chars (0-35).
+      x1 = decode36(block[0]!) + additionalPadding;
+      y1 = decode36(block[1]!) + additionalPadding;
+      type = block[2]!;
+      x2 = decode36(block[3]!) + additionalPadding;
+      y2 = decode36(block[4]!) + additionalPadding;
+      colorIndex = parseInt(block.substring(5, 8), 16);
+      weight = decode36(block[8]!);
+      opacity = decode36(block[9]!) / 35;
+      rotation = decode36(block[10]!) * 10;
+      zIndex = decode36(block[11]!);
+      radius = decode36(block[12]!);
+    } else if (isV7) {
       // v7: coords are 2 hex chars with offset; type at index 4.
       x1 = decodeCoord(block.substring(0, 2)) + additionalPadding;
       y1 = decodeCoord(block.substring(2, 4)) + additionalPadding;
@@ -73,11 +93,13 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
       x2 = decodeCoord(block.substring(5, 7)) + additionalPadding;
       y2 = decodeCoord(block.substring(7, 9)) + additionalPadding;
       colorIndex = parseInt(block.substring(9, 12), 16);
-      weight = parseInt(block[12]!, 16);
-      opacity = parseInt(block[13]!, 16) / 15;
-      rotation = parseInt(block[14]!, 16) * 22.5;
-      zIndex = parseInt(block[15]!, 16);
-      radius = parseInt(block[16]!, 16);
+      // Legacy 0-15 fields are rescaled to the canonical 0-35 scale so all
+      // versions render identically (min/max preserved).
+      weight = rescaleLegacyField(parseInt(block[12]!, 16));
+      opacity = rescaleLegacyField(parseInt(block[13]!, 16)) / 35;
+      rotation = rescaleLegacyField(parseInt(block[14]!, 16), true) * 10;
+      zIndex = rescaleLegacyField(parseInt(block[15]!, 16));
+      radius = rescaleLegacyField(parseInt(block[16]!, 16));
     } else {
       x1 = parseInt(block[0]!, 16) + additionalPadding;
       y1 = parseInt(block[1]!, 16) + additionalPadding;
@@ -88,14 +110,16 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
       colorIndex = (isV5 || isV6)
         ? parseInt(block.substring(5, 8), 16)
         : parseInt(block.substring(5, 7), 16);
-      weight = parseInt((isV5 || isV6 ? block[8]! : block[7]!), 16);
+      // Legacy 0-15 fields → canonical 0-35.
+      weight = rescaleLegacyField(parseInt((isV5 || isV6 ? block[8]! : block[7]!), 16));
       // v4/v5/v6: extra fields
       const extOffset = (isV5 || isV6) ? 9 : 8;
-      opacity = (isV4 || isV5 || isV6) ? parseInt(block[extOffset]!, 16) / 15 : 1.0;
-      rotation = (isV4 || isV5 || isV6) ? parseInt(block[extOffset + 1]!, 16) * 22.5 : 0;
-      zIndex = (isV4 || isV5 || isV6) ? parseInt(block[extOffset + 2]!, 16) : 0;
+      const hasExt = isV4 || isV5 || isV6;
+      opacity = hasExt ? rescaleLegacyField(parseInt(block[extOffset]!, 16)) / 35 : 1.0;
+      rotation = hasExt ? rescaleLegacyField(parseInt(block[extOffset + 1]!, 16), true) * 10 : 0;
+      zIndex = hasExt ? rescaleLegacyField(parseInt(block[extOffset + 2]!, 16)) : 0;
       // v6: radius (rounded corners)
-      radius = isV6 ? parseInt(block[extOffset + 3]!, 16) : 0;
+      radius = isV6 ? rescaleLegacyField(parseInt(block[extOffset + 3]!, 16)) : 0;
     }
 
     const isFilled = type !== 'l' && type === type.toUpperCase();
@@ -117,7 +141,7 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
         break;
       case 'r': // Rectangle: opposite corners (x1,y1) and (x2,y2)
         if (radius > 0) {
-          const r = Math.min(radius / 15 * 7.5, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2);
+          const r = Math.min(radius / 35 * 7.5, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2);
           const rx = Math.min(r, Math.abs(x2 - x1) / 2);
           const ry = Math.min(r, Math.abs(y2 - y1) / 2);
           d = `M ${x1 + rx} ${y1} ` +

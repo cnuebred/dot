@@ -22,7 +22,7 @@ export function buildPath(baseType: string, x1: number, y1: number, x2: number, 
       return `M ${x1} ${y1} L ${x2} ${y2}`;
     case 'r': {
       if (radius > 0) {
-        const r = Math.min(radius / 15 * 7.5, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2);
+        const r = Math.min(radius / 35 * 7.5, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2);
         const rx = Math.min(r, Math.abs(x2 - x1) / 2);
         const ry = Math.min(r, Math.abs(y2 - y1) / 2);
         return `M ${x1 + rx} ${y1} ` +

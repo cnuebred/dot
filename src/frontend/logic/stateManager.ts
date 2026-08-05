@@ -11,15 +11,15 @@ export interface Figure {
   p2: number;
   /** 12-bit color value (0-4095): paletteId<<6 | colorIndex (Format 5.0). */
   color: number;
-  /** Line weight (0-15), 16 levels. 0 = thinnest, 15 = thickest. */
+  /** Line weight (0-35), canonical scale. 0 = thinnest, 35 = thickest. */
   weight: number;
-  /** Opacity 0-15 (0=fully transparent, 15=fully opaque). v4. */
+  /** Opacity 0-35 (0=fully transparent, 35=fully opaque). */
   opacity: number;
-  /** Rotation 0-15 (0°-337.5°, step 22.5°). v4. */
+  /** Rotation 0-35 (0°-350°, step 10°). */
   rotation: number;
-  /** Z-index 0-15 (higher = on top). v4. */
+  /** Z-index 0-35 (higher = on top). */
   zIndex: number;
-  /** Corner radius 0-15 (rounded corners on rect). v6. */
+  /** Corner radius 0-35 (rounded corners on rect). */
   radius: number;
 }
 
@@ -45,7 +45,7 @@ type StateListener = (data: any) => void;
 const AUTOSAVE_ENABLED_KEY = 'dot:autosave:enabled';
 const AUTOSAVE_DATA_KEY = 'dot:autosave:data';
 
-class StateManager {
+export class StateManager {
   private listeners: Map<string, StateListener[]> = new Map();
   
   public committedFigures: Figure[] = [];
@@ -55,7 +55,7 @@ class StateManager {
     type: 'l',
     color: 0,
     weight: 0,
-    opacity: 15,
+    opacity: 35,
     rotation: 0,
     zIndex: 0,
     radius: 0,
@@ -66,10 +66,24 @@ class StateManager {
   public currentColor = 0;
   public currentPalette = 0;
   public currentWeight = 0;
-  public currentOpacity = 15;
+  public currentOpacity = 35;
   public currentRotation = 0;
   public currentZIndex = 0;
   public autosaveEnabled = false;
+
+  /**
+   * Canvas size in points (max coordinate). Supported values:
+   *  - 15  → 16×16 point canvas (default, stateless / shareable)
+   *  - 63  → 64×64 point canvas (client-only – hotlink/export disabled)
+   *  - 127 → 128×128 point canvas (client-only – hotlink/export disabled)
+   * Larger canvases are client-side only because their state cannot be
+   * encoded into the URL / backend without blowing the payload limits.
+   */
+  public canvasSize = 15;
+  /** Highest coordinate available on the current canvas (== canvasSize). */
+  public get maxCoord(): number {
+    return this.canvasSize;
+  }
 
   /**
    * Monotonic counter incremented whenever the committed figures change.
@@ -182,6 +196,31 @@ class StateManager {
     this.emit('colorChanged', colorIndex);
   }
 
+  /**
+   * Applies a color to the current selection (if any), or just sets the
+   * active drawing color when nothing is selected.
+   *
+   * When figures are selected, their `color` is updated to `colorIndex`
+   * (with history + persist), so clicking a swatch recolors the selected
+   * element(s). Returns true if a selection was recolored.
+   */
+  setColorForSelection(colorIndex: number): boolean {
+    this.currentColor = colorIndex;
+    this.emit('colorChanged', colorIndex);
+
+    if (this.selectedIndices.length === 0) return false;
+
+    this.pushHistory();
+    this.selectedIndices.forEach(i => {
+      const f = this.committedFigures[i];
+      if (f) f.color = colorIndex;
+    });
+    this.emitCommitted();
+    this.emit('selectionChanged', { indices: this.selectedIndices });
+    this.persistIfEnabled();
+    return true;
+  }
+
   setPalette(paletteId: number) {
     this.currentPalette = paletteId;
     this.emit('paletteChanged', paletteId);
@@ -210,6 +249,41 @@ class StateManager {
   setRadius(radius: number) {
     this.currentRadius = radius;
     this.emit('radiusChanged', radius);
+  }
+
+  /**
+   * The supported canvas sizes (max coordinate values).
+   */
+  static readonly CANVAS_SIZES: ReadonlyArray<{ label: string; maxCoord: number; stateless: boolean }> = [
+    { label: '16×16', maxCoord: 15, stateless: true },
+    { label: '32×32', maxCoord: 31, stateless: true },
+    { label: '64×64', maxCoord: 63, stateless: false },
+    { label: '128×128', maxCoord: 127, stateless: false },
+  ];
+
+  /** Whether the current canvas can be shared via stateless URL/backend. */
+  isStateless(): boolean {
+    // 16×16 and 32×32 fit within the base-36 coord range (0-35), so they can
+    // be encoded into the stateless URL. 64/128 exceed it → client-only.
+    return this.canvasSize === 15 || this.canvasSize === 31;
+  }
+
+  /**
+   * Changes the canvas size. Returns true on success, false if `size` is not
+   * a supported canvas size. Larger canvases are client-side only, so their
+   * state is not stored in the stateless autosave payload.
+   */
+  setCanvasSize(size: number): boolean {
+    const supported = StateManager.CANVAS_SIZES.some((s) => s.maxCoord === size);
+    if (!supported || size === this.canvasSize) {
+      return size === this.canvasSize;
+    }
+    this.canvasSize = size;
+    // Clearing committed figures avoids any ambiguity about coordinates
+    // living outside the new bounds and drops references to the old size.
+    this.clearAll();
+    this.emit('canvasSizeChanged', size);
+    return true;
   }
 
   /** Determines current tool letter (case = stroke/fill). Line variants are always stroke. */
@@ -363,13 +437,13 @@ class StateManager {
     this.emit('movePreview', { indices: this.selectedIndices });
   }
 
-  /** Rotates the selection by `steps` (each = 22.5°) around its center. */
+  /** Rotates the selection by `steps` (each = 10°) around its center. */
   rotateSelection(steps: number, commitHistory = true) {
     if (this.selectedIndices.length === 0) return;
     if (commitHistory) this.pushHistory();
     this.selectedIndices.forEach(i => {
       const f = this.committedFigures[i]!;
-      f.rotation = (f.rotation + steps + 16) % 16;
+      f.rotation = (f.rotation + steps + 36) % 36;
     });
     this.emitCommitted();
     if (commitHistory) this.persistIfEnabled();
@@ -685,7 +759,10 @@ class StateManager {
 
   private persistIfEnabled() {
     if (!this.autosaveEnabled) return;
-    this.writeLocalStorage(AUTOSAVE_DATA_KEY, JSON.stringify(this.committedFigures));
+    this.writeLocalStorage(AUTOSAVE_DATA_KEY, JSON.stringify({
+      canvasSize: this.canvasSize,
+      figures: this.committedFigures,
+    }));
   }
 
   /** Ładuje ostatnio zapisany projekt z localStorage (jeśli autozapis jest włączony). Wywoływane raz przy starcie aplikacji. */
@@ -696,9 +773,14 @@ class StateManager {
     if (!raw) return;
 
     try {
-      const restored = JSON.parse(raw);
-      if (Array.isArray(restored)) {
-        this.committedFigures = restored;
+      const parsed = JSON.parse(raw);
+      // New format: { canvasSize, figures }. Legacy format: array of figures.
+      const figures = Array.isArray(parsed) ? parsed : parsed?.figures;
+      if (Array.isArray(figures)) {
+        if (!Array.isArray(parsed) && typeof parsed?.canvasSize === 'number') {
+          this.canvasSize = parsed.canvasSize;
+        }
+        this.committedFigures = figures;
         this.emitCommitted();
       }
     } catch {

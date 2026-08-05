@@ -10,6 +10,7 @@
  * miss we render + store in both.
  */
 import type { RenderCache } from './renderCache';
+import { withOperationTimeout } from './redisGuard';
 
 const REDIS_URL = process.env.REDIS_URL || process.env.VALKEY_URL || '';
 
@@ -33,12 +34,19 @@ function getClient(): any {
 
 const PREFIX = 'dot:render:';
 
+/**
+ * How long a single Redis command may take before we give up and treat it as
+ * a miss. Must stay well under Bun.serve's default 10s idleTimeout so hung
+ * Redis never trips the request timeout. 1.5s is plenty for a healthy Redis.
+ */
+const REDIS_OP_TIMEOUT_MS = 1500;
+
 /** Attempts to populate the local cache from Redis. Returns true on hit. */
 export async function tryRedisGet(cache: RenderCache, key: string): Promise<boolean> {
   const c = getClient();
   if (!c) return false;
   try {
-    const raw = await c.get(PREFIX + key);
+    const raw = await withOperationTimeout(c.get(PREFIX + key), REDIS_OP_TIMEOUT_MS, 'get');
     if (!raw) return false;
     const entry: RedisEntry = JSON.parse(raw);
     if (!entry?.svg) return false;
@@ -77,7 +85,11 @@ export async function redisSet(cache: RenderCache, key: string): Promise<void> {
     if (entry.webpBuffer) redisEntry.webp = (entry.webpBuffer as Buffer).toString('base64');
     if (entry.icoBuffer) redisEntry.ico = (entry.icoBuffer as Buffer).toString('base64');
     // TTL 1 hour – matches the local cache TTL.
-    await c.set(PREFIX + key, JSON.stringify(redisEntry), 'EX', 3600);
+    await withOperationTimeout(
+      c.set(PREFIX + key, JSON.stringify(redisEntry), 'EX', 3600),
+      REDIS_OP_TIMEOUT_MS,
+      'set'
+    );
   } catch {
     // Redis down – non-fatal.
   }

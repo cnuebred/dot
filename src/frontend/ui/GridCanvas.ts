@@ -17,6 +17,8 @@ export class GridCanvas {
   private previewPath: SVGPathElement;
   private highlightPath: SVGPathElement;
   private drawGroup: SVGGElement;
+  private gridGroup: SVGGElement;
+  private clipRect: SVGRectElement;
   private arrowPath: SVGPolygonElement | null = null;
   private isDrawing = false;
   private isMoving = false;
@@ -37,17 +39,20 @@ export class GridCanvas {
     this.canvasElement = document.createElement('div');
     this.canvasElement.className = 'grid-canvas';
 
+    const maxCoord = stateManager.maxCoord;
+
     // Inline SVG of committed figures – rendered client-side (no network round-trip).
-    // viewBox 15×15 maps the 0-15 coordinate range edge-to-edge and centers it.
+    // viewBox "0 0 maxCoord maxCoord" maps the 0-maxCoord coordinate range
+    // edge-to-edge and centers it (matches the backend SVG output for size 15).
     this.committedSvg = document.createElementNS(SVG_NS, 'svg') as SVGSVGElement;
-    this.committedSvg.setAttribute('viewBox', '0 0 15 15');
+    this.committedSvg.setAttribute('viewBox', `0 0 ${maxCoord} ${maxCoord}`);
     this.committedSvg.classList.add('committed-preview');
     this.committedSvg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
 
     // SVG overlay for live draft preview (uncompressed, 60 FPS)
     this.previewSvg = document.createElementNS(SVG_NS, 'svg') as SVGSVGElement;
-    // viewBox 0 0 15 15 – the 0-15 range fills the viewport, so the grid is centered.
-    this.previewSvg.setAttribute('viewBox', '0 0 15 15');
+    // viewBox 0 0 maxCoord maxCoord – the 0-maxCoord range fills the viewport, so the grid is centered.
+    this.previewSvg.setAttribute('viewBox', `0 0 ${maxCoord} ${maxCoord}`);
     this.previewSvg.classList.add('draft-preview');
     this.previewSvg.setAttribute('color', '#666');
 
@@ -75,43 +80,32 @@ export class GridCanvas {
     erasePattern.append(r1, r2, r3);
     defs.appendChild(erasePattern);
 
-    // Clip the drawing group to the 15×15 workspace so draft shapes cannot
+    // Clip the drawing group to the maxCoord workspace so draft shapes cannot
     // visually overflow the canvas edge.
     const clip = document.createElementNS(SVG_NS, 'clipPath');
     clip.setAttribute('id', 'workspace-clip');
-    const clipRect = document.createElementNS(SVG_NS, 'rect');
-    clipRect.setAttribute('width', '15');
-    clipRect.setAttribute('height', '15');
-    clip.appendChild(clipRect);
+    this.clipRect = document.createElementNS(SVG_NS, 'rect') as SVGRectElement;
+    this.clipRect.setAttribute('width', String(maxCoord));
+    this.clipRect.setAttribute('height', String(maxCoord));
+    clip.appendChild(this.clipRect);
     defs.appendChild(clip);
 
     this.previewSvg.appendChild(defs);
 
-    // Drawing group – coordinates 0–15 mapped directly to viewBox 16×16.
+    // Drawing group – coordinates 0-maxCoord mapped directly to the viewBox.
     this.drawGroup = document.createElementNS(SVG_NS, 'g');
     this.drawGroup.setAttribute('clip-path', 'url(#workspace-clip)');
 
-    // Grid dots – suggested drawing points (16×16 = 256 dots).
-    // Generated explicitly (not via <pattern>) to avoid subpixel
-    // offsets at small viewBox.
+    // Grid dots – suggested drawing points (maxCoord+1 per axis).
+    // Generated explicitly (not via <pattern>) to avoid subpixel offsets.
     //
-    // The full 16×16 grid maps 1:1 onto the canvas (no percentage padding),
-    // so the perimeter dots double as a decorative frame around the drawing
-    // area. Edge dots are slightly larger to read as that border.
-    const gridGroup = document.createElementNS(SVG_NS, 'g');
-    gridGroup.setAttribute('fill', 'currentColor');
-    for (let x = 0; x <= 15; x++) {
-      for (let y = 0; y <= 15; y++) {
-        const dot = document.createElementNS(SVG_NS, 'circle');
-        dot.setAttribute('cx', String(x));
-        dot.setAttribute('cy', String(y));
-        const onEdge = x === 0 || x === 15 || y === 0 || y === 15;
-        dot.setAttribute('r', onEdge ? '0.07' : '0.05');
-        dot.setAttribute('opacity', onEdge ? '0.7' : '0.35');
-        gridGroup.appendChild(dot);
-      }
-    }
-    this.drawGroup.appendChild(gridGroup);
+    // The full grid maps 1:1 onto the canvas (no percentage padding), so the
+    // perimeter dots double as a decorative frame around the drawing area.
+    // Edge dots are slightly larger to read as that border.
+    this.gridGroup = document.createElementNS(SVG_NS, 'g');
+    this.gridGroup.setAttribute('fill', 'currentColor');
+    this.rebuildGridDots();
+    this.drawGroup.appendChild(this.gridGroup);
 
     this.previewPath = document.createElementNS(SVG_NS, 'path') as SVGPathElement;
     this.drawGroup.appendChild(this.previewPath);
@@ -147,7 +141,7 @@ export class GridCanvas {
     this.canvasElement.addEventListener('mousedown', (e: MouseEvent) => {
       const pos = this.getGridPosFromClient(e.clientX, e.clientY);
       if(pos.x < 0 || pos.y < 0) return;
-      if(pos.x >= 16 || pos.y >= 16) return;
+      if(pos.x > stateManager.maxCoord || pos.y > stateManager.maxCoord) return;
 
       if (stateManager.currentTool === 'm') {
         // Move mode – check transform handles first, then select/move/marquee.
@@ -209,7 +203,7 @@ export class GridCanvas {
 
       const pos = this.getGridPosFromClient(e.clientX, e.clientY);
       if(pos.x < 0 || pos.y < 0) return;
-      if(pos.x >= 16 || pos.y >= 16) return;
+      if(pos.x > stateManager.maxCoord || pos.y > stateManager.maxCoord) return;
 
       if (this.activeHandle) {
         this.dragHandle(pos.x, pos.y);
@@ -342,9 +336,41 @@ export class GridCanvas {
       this.renderHandles();
     }));
     this.unsubs.push(stateManager.subscribe('figureHighlighted', (fig: Figure) => this.renderHighlight(fig)));
+    this.unsubs.push(stateManager.subscribe('canvasSizeChanged', () => this.applyCanvasSize()));
 
     // Set initial cursor
     this.canvasElement.style.cursor = stateManager.currentTool === 'm' ? 'grab' : 'crosshair';
+  }
+
+  /** Rebuilds the grid dots from the current canvas size. */
+  private rebuildGridDots() {
+    this.gridGroup.innerHTML = '';
+    const maxCoord = stateManager.maxCoord;
+    for (let x = 0; x <= maxCoord; x++) {
+      for (let y = 0; y <= maxCoord; y++) {
+        const dot = document.createElementNS(SVG_NS, 'circle');
+        dot.setAttribute('cx', String(x));
+        dot.setAttribute('cy', String(y));
+        const onEdge = x === 0 || x === maxCoord || y === 0 || y === maxCoord;
+        dot.setAttribute('r', onEdge ? '0.07' : '0.05');
+        dot.setAttribute('opacity', onEdge ? '0.7' : '0.35');
+        this.gridGroup.appendChild(dot);
+      }
+    }
+  }
+
+  /** Applies a canvas-size change to the SVGs (viewBox, clip, grid, committed render). */
+  private applyCanvasSize() {
+    const maxCoord = stateManager.maxCoord;
+    this.committedSvg.setAttribute('viewBox', `0 0 ${maxCoord} ${maxCoord}`);
+    this.previewSvg.setAttribute('viewBox', `0 0 ${maxCoord} ${maxCoord}`);
+    this.clipRect.setAttribute('width', String(maxCoord));
+    this.clipRect.setAttribute('height', String(maxCoord));
+    this.rebuildGridDots();
+    this.hideHandles();
+    this.previewPath.removeAttribute('d');
+    this.previewPath.removeAttribute('transform');
+    renderCommittedSvg(this.committedSvg, stateManager.committedFigures);
   }
 
   private getTouchGridPos(touch: Touch): { x: number; y: number } {
@@ -360,7 +386,7 @@ export class GridCanvas {
     const rect = this.previewSvg.getBoundingClientRect();
     const offsetX = clientX - rect.left;
     const offsetY = clientY - rect.top;
-    return getGridPos(offsetX, offsetY, rect.width);
+    return getGridPos(offsetX, offsetY, rect.width, stateManager.maxCoord);
   }
 
   /** Like getGridPosFromClient but unclamped, for moving shapes beyond the workspace. */
@@ -368,7 +394,7 @@ export class GridCanvas {
     const rect = this.previewSvg.getBoundingClientRect();
     const offsetX = clientX - rect.left;
     const offsetY = clientY - rect.top;
-    return getGridPosUnclamped(offsetX, offsetY, rect.width);
+    return getGridPosUnclamped(offsetX, offsetY, rect.width, stateManager.maxCoord);
   }
 
   private renderPreview(draft: DraftState) {
@@ -382,8 +408,8 @@ export class GridCanvas {
     const baseType = draft.type.toLowerCase();
     const isFilled = draft.type !== 'l' && draft.type === draft.type.toUpperCase();
     const color = getColorByIndex(draft.color);
-    const opacity = (draft.opacity ?? 15) / 15;
-    const rotation = (draft.rotation ?? 0) * 22.5;
+    const opacity = (draft.opacity ?? 35) / 35;
+    const rotation = (draft.rotation ?? 0) * 10;
 
     // Unified with backend compileToSvg (svgCompiler.ts)
     const sw = strokeWidth(draft.weight);
@@ -456,8 +482,8 @@ export class GridCanvas {
       const baseType = fig.type.toLowerCase();
       const isFilled = fig.type !== 'l' && fig.type === fig.type.toUpperCase();
       const color = getColorByIndex(fig.color);
-      const opacity = (fig.opacity ?? 15) / 15;
-      const rotation = (fig.rotation ?? 0) * 22.5;
+      const opacity = (fig.opacity ?? 35) / 35;
+      const rotation = (fig.rotation ?? 0) * 10;
       const sw = strokeWidth(fig.weight);
       const lineCap = getLineCap(fig.type);
       const isErase = fig.opacity === 0;
@@ -636,7 +662,7 @@ export class GridCanvas {
     if (!handle || !bounds) return;
 
     if (handle === 'rotate') {
-      // Rotate by 22.5° steps based on horizontal drag distance.
+      // Rotate by 10° steps based on horizontal drag distance (canonical 0-35).
       const dx = gx - this.moveAnchorX;
       const steps = Math.round(dx / 1.5);
       if (steps !== 0) {
@@ -660,7 +686,7 @@ export class GridCanvas {
   private renderHighlight(fig: Figure) {
     const x1 = fig.x1, y1 = fig.y1, x2 = fig.p1, y2 = fig.p2;
     const baseType = fig.type.toLowerCase();
-    const rotation = (fig.rotation ?? 0) * 22.5;
+    const rotation = (fig.rotation ?? 0) * 10;
 
     this.highlightPath.setAttribute('d', buildPath(baseType, x1, y1, x2, y2, fig.radius ?? 0));
     this.highlightPath.setAttribute('stroke-opacity', '0.8');

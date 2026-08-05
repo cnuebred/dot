@@ -1,4 +1,4 @@
-import { stateManager } from '../logic/stateManager';
+import { stateManager, StateManager } from '../logic/stateManager';
 import type { ToolBase } from '../logic/stateManager';
 import { ExportModal } from './ExportModal';
 import { ColorPicker } from './ColorPicker';
@@ -122,7 +122,7 @@ export class Toolbar {
     const weightSlider = document.createElement('input');
     weightSlider.type = 'range';
     weightSlider.min = '0';
-    weightSlider.max = '15';
+    weightSlider.max = '35';
     weightSlider.value = String(stateManager.currentWeight);
     weightSlider.className = 'weight-slider';
     weightSlider.oninput = () => stateManager.setWeight(parseInt(weightSlider.value));
@@ -148,16 +148,16 @@ export class Toolbar {
     const opacitySlider = document.createElement('input');
     opacitySlider.type = 'range';
     opacitySlider.min = '0';
-    opacitySlider.max = '15';
+    opacitySlider.max = '35';
     opacitySlider.value = String(stateManager.currentOpacity);
     opacitySlider.className = 'weight-slider';
     const opacityLabel = document.createElement('span');
     opacityLabel.className = 'weight-value';
-    opacityLabel.textContent = Math.round(stateManager.currentOpacity / 15 * 100) + '%';
+    opacityLabel.textContent = Math.round(stateManager.currentOpacity / 35 * 100) + '%';
 
     opacitySlider.oninput = () => {
       const val = parseInt(opacitySlider.value);
-      opacityLabel.textContent = Math.round(val / 15 * 100) + '%';
+      opacityLabel.textContent = Math.round(val / 35 * 100) + '%';
       stateManager.setOpacity(val);
     };
 
@@ -181,8 +181,8 @@ export class Toolbar {
         opacitySlider.value = '0';
         opacityLabel.textContent = '0%';
       } else {
-        stateManager.setOpacity(15);
-        opacitySlider.value = '15';
+        stateManager.setOpacity(35);
+        opacitySlider.value = '35';
         opacityLabel.textContent = '100%';
       }
     };
@@ -213,7 +213,7 @@ export class Toolbar {
     const rotationSlider = document.createElement('input');
     rotationSlider.type = 'range';
     rotationSlider.min = '0';
-    rotationSlider.max = '15';
+    rotationSlider.max = '35';
     rotationSlider.value = String(stateManager.currentRotation);
     rotationSlider.className = 'weight-slider';
     rotationSlider.oninput = () => {
@@ -223,11 +223,11 @@ export class Toolbar {
 
     const rotationLabel = document.createElement('span');
     rotationLabel.className = 'weight-value';
-    rotationLabel.textContent = (stateManager.currentRotation * 22.5) + '°';
+    rotationLabel.textContent = (stateManager.currentRotation * 10) + '°';
 
     rotationSlider.oninput = () => {
       const val = parseInt(rotationSlider.value);
-      rotationLabel.textContent = (val * 22.5) + '°';
+      rotationLabel.textContent = (val * 10) + '°';
       stateManager.setRotation(val);
     };
 
@@ -242,7 +242,7 @@ export class Toolbar {
     const zIndexSlider = document.createElement('input');
     zIndexSlider.type = 'range';
     zIndexSlider.min = '0';
-    zIndexSlider.max = '15';
+    zIndexSlider.max = '35';
     zIndexSlider.value = String(stateManager.currentZIndex);
     zIndexSlider.className = 'weight-slider';
     zIndexSlider.oninput = () => {
@@ -271,7 +271,7 @@ export class Toolbar {
     const radiusSlider = document.createElement('input');
     radiusSlider.type = 'range';
     radiusSlider.min = '0';
-    radiusSlider.max = '15';
+    radiusSlider.max = '35';
     radiusSlider.value = String(stateManager.currentRadius);
     radiusSlider.className = 'weight-slider';
     radiusSlider.oninput = () => {
@@ -286,6 +286,70 @@ export class Toolbar {
 
     radiusGroup.append(radiusSlider, radiusLabel);
     container.appendChild(radiusGroup);
+
+    // --- Canvas size (points per axis) ---
+    // Larger canvases are client-side only: the 64/128 canvases cannot be
+    // encoded into the stateless URL, so their hotlink/export is disabled.
+    const canvasSizeGroup = document.createElement('div');
+    canvasSizeGroup.className = 'tool-group';
+    canvasSizeGroup.innerHTML = `<label>Canvas Size</label>`;
+
+    const canvasSizeSelect = document.createElement('select');
+    canvasSizeSelect.className = 'canvas-size-select';
+
+    const canvasSizeHint = document.createElement('p');
+    canvasSizeHint.className = 'hint-text';
+    canvasSizeHint.style.cssText = 'min-height:1.2em;font-size:0.78rem;color:#64748b;margin-top:0.25rem;';
+
+    const renderCanvasSizeOptions = () => {
+      canvasSizeSelect.innerHTML = '';
+      for (const size of StateManager.CANVAS_SIZES) {
+        const opt = document.createElement('option');
+        opt.value = String(size.maxCoord);
+        opt.textContent = size.label + (size.stateless ? '' : ' (client-only)');
+        if (size.maxCoord === stateManager.canvasSize) opt.selected = true;
+        canvasSizeSelect.appendChild(opt);
+      }
+    };
+    renderCanvasSizeOptions();
+
+    const refreshCanvasSizeHint = () => {
+      const size = StateManager.CANVAS_SIZES.find((s) => s.maxCoord === stateManager.canvasSize);
+      canvasSizeHint.textContent = size && !size.stateless
+        ? 'This canvas is client-only – hotlink & export are disabled.'
+        : '';
+    };
+    refreshCanvasSizeHint();
+
+    canvasSizeSelect.onchange = () => {
+      const newSize = parseInt(canvasSizeSelect.value);
+      if (newSize === stateManager.canvasSize) return;
+      const target = StateManager.CANVAS_SIZES.find((s) => s.maxCoord === newSize);
+      if (target && !target.stateless) {
+        const ok = window.confirm(
+          `Switching to a ${target.label} canvas is client-only.\n\n` +
+          'You will lose the stateless (shareable) hotlink, and the Export / Gallery ' +
+          'options will be disabled for this canvas. The current drawing will be cleared.\n\n' +
+          'Continue?'
+        );
+        if (!ok) {
+          // Revert selection to current size.
+          canvasSizeSelect.value = String(stateManager.canvasSize);
+          return;
+        }
+      }
+      stateManager.setCanvasSize(newSize);
+      renderCanvasSizeOptions();
+      refreshCanvasSizeHint();
+    };
+
+    this.unsubs.push(stateManager.subscribe('canvasSizeChanged', () => {
+      renderCanvasSizeOptions();
+      refreshCanvasSizeHint();
+    }));
+
+    canvasSizeGroup.append(canvasSizeSelect, canvasSizeHint);
+    container.appendChild(canvasSizeGroup);
 
     // Color selection (64-color palette)
     container.appendChild(new ColorPicker().render());
@@ -344,6 +408,16 @@ export class Toolbar {
 
     // Funkcja aktualizująca input z bieżącego stanu canvasu
     const updateImportInput = () => {
+      // Larger canvases (64/128) are client-only – no stateless URL to show.
+      if (!stateManager.isStateless()) {
+        importInput.value = '';
+        importInput.disabled = true;
+        importInput.placeholder = 'Hotlink unavailable for this canvas';
+        importStatus.textContent = '';
+        return;
+      }
+      importInput.disabled = false;
+      importInput.placeholder = 'Paste link or payload...';
       const encoded = encodeCommittedState();
       if (encoded) {
         importInput.value = `${window.location.origin}/r/${encoded}`;
@@ -374,10 +448,12 @@ export class Toolbar {
         // Nie URL – traktuj jako surowy payload
       }
 
-      const figures = decodeState(payload);
-      if (figures && figures.length > 0) {
-        stateManager.loadFigures(figures);
-        importStatus.textContent = `✅ Imported ${figures.length} figures`;
+      const decoded = decodeState(payload);
+      if (decoded && decoded.figures.length > 0) {
+        // v8 payloads carry their canvas size – restore it on import.
+        stateManager.setCanvasSize(decoded.size);
+        stateManager.loadFigures(decoded.figures);
+        importStatus.textContent = `✅ Imported ${decoded.figures.length} figures`;
         importStatus.style.color = '#4ade80';
       } else if (payload.length > 0) {
         importStatus.textContent = '❌ Invalid format';

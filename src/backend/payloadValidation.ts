@@ -7,6 +7,8 @@ export interface PayloadValidationResult {
   success: true;
   body: unknown;
   version: number;
+  /** Canvas max coordinate for v8 (15/31); undefined for legacy. */
+  size?: number;
 }
 
 export interface PayloadValidationError {
@@ -37,7 +39,7 @@ export function validateAndDecodePayload(payload: unknown): PayloadValidationOut
   if (!parsed) {
     return { success: false, error: 'Missing format version preamble' };
   }
-  // Accept v3, v4 and v5 (validator.ts handles all block formats)
+  // Accept v3..v8 (validator.ts handles all block formats)
   if (parsed.version < 3 || parsed.version > FORMAT_VERSION) {
     return { success: false, error: `Unsupported format version: v${parsed.version}` };
   }
@@ -47,5 +49,5 @@ export function validateAndDecodePayload(payload: unknown): PayloadValidationOut
     return { success: false, error: validation.error || 'Invalid icon data' };
   }
 
-  return { success: true, body: parsed.body, version: parsed.version };
+  return { success: true, body: parsed.body, version: parsed.version, size: parsed.size };
 }

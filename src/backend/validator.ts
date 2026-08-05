@@ -1,4 +1,5 @@
 import { MAX_COLOR_INDEX, COLOR_INDEX_MASK } from '../shared/palette';
+import { BASE36_CHAR } from '../shared/base36';
 
 export interface ValidationResult {
   isValid: boolean;
@@ -20,29 +21,27 @@ const BLOCK_LENGTH_V4 = 11;
 const BLOCK_LENGTH_V5 = 12;
 const BLOCK_LENGTH_V6 = 13;
 const BLOCK_LENGTH_V7 = 17;
+const BLOCK_LENGTH_V8 = 13;
 
 /**
- * Validates a string against the dot.qrware specification (Format 3.0 – 7.0).
- * Accepts 8-char blocks (v3), 11-char blocks (v4), 12-char blocks (v5),
- * 13-char blocks (v6) or 17-char blocks (v7).
- * v3: [X1][Y1][TYPE][X2][Y2][C1][C2][W]
- * v4: [X1][Y1][TYPE][X2][Y2][C1][C2][W][OP][RO][ZX]
- * v5: [X1][Y1][TYPE][X2][Y2][C1][C2][C3][W][OP][RO][ZX]
- * v6: [X1][Y1][TYPE][X2][Y2][C1][C2][C3][W][OP][RO][ZX][RD]
- * v7: [X1X1][Y1Y1][TYPE][X2X2][Y2Y2][C1][C2][C3][W][OP][RO][ZX][RD]
- * where v7 coordinates are 2 hex chars with offset 128 (signed -128..127),
- * allowing shapes to extend beyond the 15×15 workspace.
- *
- * `version` must be provided for v7 (its block length is ambiguous via modulo).
+ * Validates a string against the dot.qrware specification (Format 3.0 – 8.0).
+ * Accepts 8-char blocks (v3), 11-char (v4), 12-char (v5), 13-char (v6 or v8),
+ * 17-char (v7) blocks.
+ * v8: [X1][Y1][TYPE][X2][Y2][C1][C2][C3][W][OP][RO][ZX][RD]
+ * where X/Y/W/OP/RO/ZX/RD are single BASE-36 chars (0-9+a-z → 0-35) and color
+ * stays 3 hex chars (12-bit). `version` disambiguates v6 vs v8 (both 13 chars).
  */
 export function validatePayload(text: string, version?: number): ValidationResult {
   if (!text || text.length === 0) {
     return { isValid: false, error: 'Empty payload' };
   }
 
+  const isV8 = version === 8;
   const isV7 = version === 7;
   let blockLen: number;
-  if (isV7) {
+  if (isV8) {
+    blockLen = BLOCK_LENGTH_V8;
+  } else if (isV7) {
     blockLen = BLOCK_LENGTH_V7;
   } else {
     // Legacy detection via modulo.
@@ -57,6 +56,35 @@ export function validatePayload(text: string, version?: number): ValidationResul
 
   for (let i = 0; i < text.length; i += blockLen) {
     const block = text.substring(i, i + blockLen);
+
+    if (isV8) {
+      // v8: coords at 0,1 (x1,y1); type at 2; x2,y2 at 3,4 – all base-36.
+      const x1 = block[0]!, y1 = block[1]!, type = block[2]!;
+      const x2 = block[3]!, y2 = block[4]!;
+      if (!BASE36_CHAR.test(x1) || !BASE36_CHAR.test(y1) ||
+          !BASE36_CHAR.test(x2) || !BASE36_CHAR.test(y2)) {
+        return { isValid: false, error: `Invalid base-36 coordinate in block at position ${i}` };
+      }
+      if (!ALLOWED_TYPES.has(type)) {
+        return { isValid: false, error: `Invalid tool type at position ${i + 2}` };
+      }
+      // color C1C2C3 at 5-7 (hex), W/OP/RO/ZX/RD at 8-12 (base-36).
+      for (let k = 5; k <= 7; k++) {
+        if (!HEX_CHAR.test(block[k]!)) {
+          return { isValid: false, error: `Invalid v8 color field at position ${i + k}` };
+        }
+      }
+      for (let k = 8; k <= 12; k++) {
+        if (!BASE36_CHAR.test(block[k]!)) {
+          return { isValid: false, error: `Invalid v8 field at position ${i + k}` };
+        }
+      }
+      const colorIndex = parseInt(block.substring(5, 8), 16);
+      if (colorIndex > MAX_COLOR_INDEX) {
+        return { isValid: false, error: `Color index out of range at position ${i + 5}` };
+      }
+      continue;
+    }
 
     if (isV7) {
       // v7: coords at 0-1, 2-3 (x1,y1); type at 4; x2,y2 at 5-6, 7-8.

@@ -1,65 +1,68 @@
 import * as fflate from 'fflate';
 import type { Figure } from './stateManager';
-import { toHex, toHex2, toHex3 } from './math';
-import { encodeCoord } from '../../shared/coords';
-import { withVersion } from '../../shared/format';
+import { toHex3 } from './math';
+import { encode36 } from '../../shared/base36';
+import { withVersion, FORMAT_VERSION } from '../../shared/format';
 
 /**
  * Generates an uncompressed RAW link (plain text, no Base64URL/compression).
- * Format: v7:<block1><block2>... where each block is 17 hex characters.
- * Useful for debugging and inspecting the icon structure.
+ * v8 format: `v8:<size>:<block1><block2>...` where each block is 13 chars:
+ *   [X1][Y1][TYPE][X2][Y2][C1][C2][C3][W][OP][RO][ZX][RD]
+ * Coords + effect fields are single BASE-36 chars (0-9+a-z → 0-35). Color is
+ * 3 hex chars (12-bit). `size` is the canvas max coord (15 or 31).
  */
-export function encodeStateRaw(figures: Figure[]): string {
+export function encodeStateRaw(figures: Figure[], size = 15): string {
   if (figures.length === 0) return "";
 
   let body = "";
   for (const fig of figures) {
-    body += 
-      encodeCoord(fig.x1) + 
-      encodeCoord(fig.y1) + 
-      fig.type + 
-      encodeCoord(fig.p1) + 
-      encodeCoord(fig.p2) +
+    body +=
+      encode36(fig.x1) +
+      encode36(fig.y1) +
+      fig.type +
+      encode36(fig.p1) +
+      encode36(fig.p2) +
       toHex3(fig.color) +
-      toHex(fig.weight) +
-      toHex(fig.opacity ?? 15) +
-      toHex(fig.rotation ?? 0) +
-      toHex(fig.zIndex ?? 0) +
-      toHex(fig.radius ?? 0);
+      encode36(fig.weight) +
+      encode36(fig.opacity ?? 35) +
+      encode36(fig.rotation ?? 0) +
+      encode36(fig.zIndex ?? 0) +
+      encode36(fig.radius ?? 0);
   }
 
-  return withVersion(body);
+  return withVersion(`${size}:${body}`);
 }
 
 /**
  * Encodes a figure array into a compressed Base64URL string.
- * v7 block format (17 chars):
- *   [X1][X1][Y1][Y1][TYPE][X2][X2][Y2][Y2][C1][C2][C3][W][OP][RO][ZX][RD]
- * Each coordinate is 2 hex chars with offset 128 → signed range -128..127,
- * allowing shapes to extend beyond the 15×15 workspace.
- * Before compression, data is prefixed with a version preamble (e.g. `v7:`).
+ * v8 block format (13 chars):
+ *   [X1][Y1][TYPE][X2][Y2][C1][C2][C3][W][OP][RO][ZX][RD]
+ * Every single-symbol field is a BASE-36 digit (0-9+a-z → value 0-35). Color
+ * stays 3 hex chars (12-bit). Coordinates 0-35 support up to a 32×32 canvas.
+ * Before compression, data is prefixed with the version + size preamble,
+ * e.g. `v8:31:...`.
  */
-export function encodeState(figures: Figure[]): string {
+export function encodeState(figures: Figure[], size = 15): string {
   if (figures.length === 0) return "";
 
-  // 1. Build text string (17-char v7 format)
+  // 1. Build text string (13-char v8 blocks, base-36 fields)
   let body = "";
   for (const fig of figures) {
-    body += 
-      encodeCoord(fig.x1) + 
-      encodeCoord(fig.y1) + 
-      fig.type + 
-      encodeCoord(fig.p1) + 
-      encodeCoord(fig.p2) +
+    body +=
+      encode36(fig.x1) +
+      encode36(fig.y1) +
+      fig.type +
+      encode36(fig.p1) +
+      encode36(fig.p2) +
       toHex3(fig.color) +
-      toHex(fig.weight) +
-      toHex(fig.opacity ?? 15) +
-      toHex(fig.rotation ?? 0) +
-      toHex(fig.zIndex ?? 0) +
-      toHex(fig.radius ?? 0);
+      encode36(fig.weight) +
+      encode36(fig.opacity ?? 35) +
+      encode36(fig.rotation ?? 0) +
+      encode36(fig.zIndex ?? 0) +
+      encode36(fig.radius ?? 0);
   }
 
-  const payload = withVersion(body);
+  const payload = withVersion(`${size}:${body}`);
 
   // 2. zlib compression (compatible with unzlibSync on backend)
   const bytes = new TextEncoder().encode(payload);
