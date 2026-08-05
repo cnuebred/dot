@@ -583,6 +583,61 @@ body {
     flex-wrap: wrap;
 }
 
+.gallery-search {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.gallery-search-input {
+    padding: 0.4rem 0.5rem;
+    font-size: 0.9rem;
+    background: var(--bg-input);
+    color: var(--text-main);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    min-width: 12rem;
+}
+
+.gallery-search-input::placeholder {
+    color: var(--text-muted);
+    opacity: 0.6;
+}
+
+.gallery-search-input:hover,
+.gallery-search-input:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
+.gallery-sort {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.gallery-sort-select {
+    padding: 0.4rem 0.5rem;
+    font-size: 0.9rem;
+    background: var(--bg-input);
+    color: var(--text-main);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: var(--font-mono);
+}
+
+.gallery-sort-select:hover,
+.gallery-sort-select:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
 .gallery-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
@@ -1058,4 +1113,207 @@ body {
 
 .docs-error {
     color: var(--danger);
+}
+
+/* --- Docs: sidebar + hamburger + editor (auth feature) --- */
+.docs-hamburger {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    border-radius: 6px;
+    padding: 0.3rem 0.6rem;
+    font-size: 1.1rem;
+    cursor: pointer;
+    display: none;
+}
+
+.docs-layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+.docs-sidebar {
+    width: 240px;
+    flex-shrink: 0;
+    background: var(--bg-panel);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 1rem;
+}
+
+.docs-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.docs-list-item {
+    width: 100%;
+    text-align: left;
+    padding: 0.5rem 0.6rem;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+}
+
+.docs-list-item:hover {
+    background: var(--bg-input);
+    color: var(--text-main);
+}
+
+.docs-list-item.active {
+    background: var(--accent);
+    color: #fff;
+}
+
+.docs-add-btn {
+    width: 100%;
+    margin-top: 1rem;
+}
+
+.docs-rendered {
+    line-height: 1.7;
+}
+
+.docs-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+
+.docs-editor {
+    width: 100%;
+    min-height: 40vh;
+    background: var(--bg-input);
+    color: var(--text-main);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    line-height: 1.6;
+    resize: vertical;
+}
+
+.docs-editor:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.btn-danger {
+    padding: 0.5rem 0.9rem;
+    background: transparent;
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.15s, color 0.15s;
+}
+
+.btn-danger:hover {
+    background: var(--danger);
+    color: #fff;
+}
+
+/* --- Login panel (GitHub OAuth) --- */
+.login-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+    padding: 1rem 1.5rem;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    max-width: 380px;
+}
+
+.login-info {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.login-btn {
+    width: 100%;
+}
+
+.login-status {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.login-user {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.login-nick {
+    font-weight: 700;
+    color: var(--text-main);
+}
+
+.login-admin-badge {
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    letter-spacing: 0.03em;
+}
+
+.login-disabled {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+/* --- Gallery admin controls --- */
+.gallery-admin-bar {
+    display: flex;
+    gap: 0.35rem;
+    width: 100%;
+    margin-top: 0.5rem;
+}
+
+.gallery-admin-btn {
+    flex: 1;
+    padding: 0.25rem 0.4rem;
+    font-size: 0.75rem;
+    min-height: 0;
+}
+
+@media (max-width: 640px) {
+    .docs-hamburger {
+        display: inline-block;
+    }
+    .docs-sidebar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: 240px;
+        z-index: 50;
+        transform: translateX(-100%);
+        transition: transform 0.2s ease;
+        box-shadow: 0 0 20px rgba(0, 0, 0, 0.4);
+    }
+    .docs-view.docs-sidebar-open .docs-sidebar {
+        transform: translateX(0);
+    }
+    .docs-layout {
+        position: relative;
+    }
 }

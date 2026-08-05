@@ -9,8 +9,20 @@ import { renderCache, RenderCache } from './renderCache';
 import { tryRedisGet, redisSet, redisCacheEnabled } from './redisCache';
 import { resolveTier, batchLimits, staticLinkQuota, limitsDisabled } from './apiKeys';
 import { sqliteEnabled } from './sqliteStore';
-import { listGalleryEntries, addGalleryEntry } from './gallery';
+import { listGalleryEntries, addGalleryEntry, renameGalleryEntry, deleteGalleryEntry } from './gallery';
 import { createStaticLink, getLinkByPublicId, getLinkByOwnerId, updateStaticLink } from './staticLinks';
+import {
+  authEnabled,
+  userFromAuthHeader,
+  exchangeGithubCode,
+  githubAuthorizeUrl,
+  issueToken,
+  verifyToken,
+  ensureUsersTable,
+  SESSION_MAX_AGE_MS,
+  type AuthUser,
+} from './auth';
+import { listDocs, readDoc, writeDoc, deleteDoc } from './docs';
 import sharp from 'sharp';
 import pngToIco from 'png-to-ico';
 
@@ -66,6 +78,15 @@ export function recordRenderTime(ms: number): void {
 
 function fallbackResponse(): Response {
   return new Response(getFallbackSvg(), { status: 400, headers: FALLBACK_HEADERS });
+}
+
+/** Reads the `dot_session` cookie and verifies it into an AuthUser (or null). */
+function userFromCookie(req: Request): AuthUser | null {
+  const cookieHeader = req.headers.get('cookie');
+  if (!cookieHeader) return null;
+  const match = /(?:^|;\s*)dot_session=([^;]+)/.exec(cookieHeader);
+  if (!match) return null;
+  return verifyToken(decodeURIComponent(match[1]!));
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -700,20 +721,109 @@ Bun.serve({
     // --- Routing: /api/docs (dokumentacja w Markdown) ---
     if (path === '/api/docs') {
       metrics.requests++;
-      const docsPath = new URL('../../data/docs.md', import.meta.url).pathname;
-      const file = Bun.file(docsPath);
-      if (await file.exists()) {
-        return new Response(file, {
-          headers: {
-            'Content-Type': 'text/markdown; charset=utf-8',
-            'Cache-Control': 'public, max-age=300',
-            ...getApiSecurityHeaders(),
-          },
-        });
+      // GET /api/docs → list available documents.
+      if (req.method === 'GET') {
+        const docs = await listDocs();
+        // Never expose absolute filesystem paths to clients.
+        const safe = docs.map(({ id, title, main }) => ({ id, title, main }));
+        return jsonResponse({ docs: safe });
       }
-      return new Response('# Dokumentacja\n\nDokumentacja jest w trakcie tworzenia.', {
+      return jsonResponse({ error: 'Method Not Allowed' }, 405);
+    }
+
+    // --- Routing: /api/docs/:id (pojedynczy dokument) ---
+    if (path.startsWith('/api/docs/')) {
+      metrics.requests++;
+      const id = decodeURIComponent(path.slice('/api/docs/'.length));
+
+      // GET → read markdown content (public).
+      if (req.method === 'GET') {
+        const doc = await readDoc(id);
+        if (!doc) return jsonResponse({ error: 'Document not found' }, 404);
+        const { file, ...safeMeta } = doc.meta;
+        return jsonResponse({ meta: safeMeta, content: doc.content });
+      }
+
+      // PUT/POST → write (admin only).
+      if (req.method === 'PUT' || req.method === 'POST') {
+        const user = userFromAuthHeader(req.headers.get('authorization')) || userFromCookie(req);
+        if (!user || !user.isAdmin) return jsonResponse({ error: 'Admin only' }, 403);
+        try {
+          const body = await readJsonBody(req);
+          if (!body) return jsonResponse({ error: 'Invalid or oversized JSON body' }, 400);
+          const result = await writeDoc(id, body?.content ?? '');
+          if (!result.success) return jsonResponse({ error: result.error }, 400);
+          const { file, ...safeMeta } = result.meta!;
+          return jsonResponse({ meta: safeMeta }, 200);
+        } catch {
+          return jsonResponse({ error: 'Invalid JSON body' }, 400);
+        }
+      }
+
+      // DELETE → remove (admin only, not the main doc).
+      if (req.method === 'DELETE') {
+        const user = userFromAuthHeader(req.headers.get('authorization')) || userFromCookie(req);
+        if (!user || !user.isAdmin) return jsonResponse({ error: 'Admin only' }, 403);
+        const result = await deleteDoc(id);
+        if (!result.success) return jsonResponse({ error: result.error }, 400);
+        return jsonResponse({ success: true });
+      }
+
+      return jsonResponse({ error: 'Method Not Allowed' }, 405);
+    }
+
+    // --- Routing: /api/auth (logowanie przez GitHub + sesje JWT) ---
+    if (path === '/api/auth') {
+      metrics.requests++;
+      // GET /api/auth/status → current user (from Bearer token OR session cookie).
+      if (req.method === 'GET') {
+        const user = userFromAuthHeader(req.headers.get('authorization')) || userFromCookie(req);
+        return jsonResponse({ authenticated: !!user, user, enabled: authEnabled() });
+      }
+      return jsonResponse({ error: 'Method Not Allowed' }, 405);
+    }
+
+    // --- Routing: /api/auth/login (start GitHub OAuth) ---
+    if (path === '/api/auth/login') {
+      metrics.requests++;
+      if (req.method !== 'GET') return jsonResponse({ error: 'Method Not Allowed' }, 405);
+      if (!authEnabled()) return jsonResponse({ error: 'Auth is not configured' }, 503);
+      // State: random, stored server-side briefly to prevent CSRF on callback.
+      const state = crypto.randomUUID();
+      const redirect = githubAuthorizeUrl(state);
+      return jsonResponse({ url: redirect });
+    }
+
+    // --- Routing: /api/auth/github/callback (OAuth redirect target) ---
+    if (path === '/api/auth/github/callback') {
+      metrics.requests++;
+      if (req.method !== 'GET') return jsonResponse({ error: 'Method Not Allowed' }, 405);
+      const code = url.searchParams.get('code');
+      if (!code) return jsonResponse({ error: 'Missing code' }, 400);
+      if (!authEnabled()) return jsonResponse({ error: 'Auth is not configured' }, 503);
+
+      const user = await exchangeGithubCode(code);
+      if (!user) return jsonResponse({ error: 'GitHub authentication failed' }, 401);
+
+      // Issue a session cookie (HttpOnly) + JWT.
+      const token = issueToken(user);
+      const cookie = `dot_session=${token}; HttpOnly; Path=/; Max-Age=${Math.floor(SESSION_MAX_AGE_MS / 1000)}; SameSite=Lax`;
+      // Redirect back to the editor/home after login.
+      const redirectTo = '/?login=success';
+      return new Response(null, {
+        status: 302,
+        headers: { Location: redirectTo, 'Set-Cookie': cookie, ...getPageSecurityHeaders() },
+      });
+    }
+
+    // --- Routing: /api/auth/logout (clear session) ---
+    if (path === '/api/auth/logout') {
+      metrics.requests++;
+      if (req.method !== 'POST') return jsonResponse({ error: 'Method Not Allowed' }, 405);
+      const cookie = 'dot_session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax';
+      return new Response(JSON.stringify({ success: true }), {
         status: 200,
-        headers: { 'Content-Type': 'text/markdown; charset=utf-8', ...getApiSecurityHeaders() },
+        headers: { 'Content-Type': 'application/json', 'Set-Cookie': cookie, ...getApiSecurityHeaders() },
       });
     }
 
@@ -813,6 +923,37 @@ Bun.serve({
       return jsonResponse({ error: 'Method Not Allowed' }, 405);
     }
 
+    // --- Routing: /api/gallery/:id (admin moderation) ---
+    if (path.startsWith('/api/gallery/')) {
+      const id = decodeURIComponent(path.slice('/api/gallery/'.length));
+
+      // PATCH → rename title (admin only).
+      if (req.method === 'PATCH') {
+        const user = userFromAuthHeader(req.headers.get('authorization')) || userFromCookie(req);
+        if (!user || !user.isAdmin) return jsonResponse({ error: 'Admin only' }, 403);
+        try {
+          const body = await readJsonBody(req);
+          if (!body) return jsonResponse({ error: 'Invalid or oversized JSON body' }, 400);
+          const result = await renameGalleryEntry(id, body?.title ?? '');
+          if (!result.success) return jsonResponse({ error: result.error }, 400);
+          return jsonResponse({ entry: result.entry });
+        } catch {
+          return jsonResponse({ error: 'Invalid JSON body' }, 400);
+        }
+      }
+
+      // DELETE → remove entry (admin only).
+      if (req.method === 'DELETE') {
+        const user = userFromAuthHeader(req.headers.get('authorization')) || userFromCookie(req);
+        if (!user || !user.isAdmin) return jsonResponse({ error: 'Admin only' }, 403);
+        const result = await deleteGalleryEntry(id);
+        if (!result.success) return jsonResponse({ error: result.error }, 400);
+        return jsonResponse({ success: true });
+      }
+
+      return jsonResponse({ error: 'Method Not Allowed' }, 405);
+    }
+
     // --- Routing: /robots.txt, /sitemap.xml, /manifest.txt (public SEO files) ---
     if (path === '/robots.txt' || path === '/sitemap.xml' || path === '/manifest.txt') {
       const fileName = path.slice(1); // e.g. "robots.txt"
@@ -857,5 +998,8 @@ Bun.serve({
     return new Response('Not Found', { status: 404, headers: getPageSecurityHeaders() });
   },
 });
+
+// Ensure auth tables exist before serving requests.
+ensureUsersTable();
 
 console.log(`SVG Generator running at http://localhost:${PORT}`);

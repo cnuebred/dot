@@ -47,7 +47,7 @@ export function renderCommittedSvg(svg: SVGSVGElement, figures: Figure[]): void 
 
     // Arrowhead overlay (if the tool is an arrowhead variant).
     let arrowEl: SVGPolygonElement | null = null;
-    const pts = arrowheadPoints(fig.type, x1, y1, x2, y2, sw);
+    const pts = arrowheadPoints(fig.type, x1, y1, x2, y2, sw, fig.radius ?? 0);
     if (pts) {
       arrowEl = document.createElementNS(SVG_NS, 'polygon') as SVGPolygonElement;
       arrowEl.setAttribute('points', pts);
@@ -91,30 +91,69 @@ export function renderCommittedSvg(svg: SVGSVGElement, figures: Figure[]): void 
     return;
   }
 
-  // Knockout: wrap normal shapes in a mask group.
-  const mask = document.createElementNS(SVG_NS, 'mask');
-  mask.setAttribute('id', 'knockout-mask');
-  const bgRect = document.createElementNS(SVG_NS, 'rect');
-  bgRect.setAttribute('width', '15');
-  bgRect.setAttribute('height', '15');
-  bgRect.setAttribute('fill', 'white');
-  mask.appendChild(bgRect);
+  // Knockout: an eraser punches holes only through figures DRAWN BEFORE it
+  // (below it in the stack). The render order is the full sorted `parts` array
+  // (stable sort by z-index → equal z-index keeps insertion order). An eraser
+  // at index j erases only normal figures at indices < j. Figures drawn after
+  // an eraser (on top of it) stay untouched.
+  //
+  // So we walk the stack from TOP to BOTTOM, accumulating the erasers seen so
+  // far, and assign each normal figure a mask containing those erasers.
+  const sortedParts = [...parts].sort((a, b) => a.zIndex - b.zIndex);
 
-  // For knockout figures, force every stroke to black (so they punch a hole).
-  // Parts are `<g>` groups that may contain a path + arrowhead polygon.
-  const addKnockoutNode = (node: SVGElement) => {
-    const clone = node.cloneNode(true) as SVGElement;
-    clone.querySelectorAll('path').forEach((p) => p.setAttribute('stroke', 'black'));
-    mask.appendChild(clone);
-  };
-  for (const p of knockout) addKnockoutNode(p.el);
+  const accumulatedErasers: SVGElement[] = [];
+  const groups: SVGGElement[] = [];
 
-  defs.appendChild(mask);
+  // Iterate top→down (last rendered → first rendered).
+  for (let i = sortedParts.length - 1; i >= 0; i--) {
+    const p = sortedParts[i]!;
+    if (p.isKnockout) {
+      // An eraser punches everything below it.
+      accumulatedErasers.push(p.el);
+      continue;
+    }
 
-  const g = document.createElementNS(SVG_NS, 'g');
-  g.setAttribute('mask', 'url(#knockout-mask)');
-  g.setAttribute('clip-path', 'url(#workspace-clip)');
-  for (const p of normal) g.appendChild(p.el);
+    // A normal figure: if no eraser lies above it, render plainly.
+    if (accumulatedErasers.length === 0) {
+      const plain = document.createElementNS(SVG_NS, 'g');
+      plain.setAttribute('clip-path', 'url(#workspace-clip)');
+      plain.appendChild(p.el);
+      groups.push(plain);
+      continue;
+    }
 
-  svg.append(defs, g);
+    // Otherwise mask it with the erasers above it.
+    const mask = document.createElementNS(SVG_NS, 'mask');
+    mask.setAttribute('id', `knockout-${i}`);
+    const bgRect = document.createElementNS(SVG_NS, 'rect');
+    bgRect.setAttribute('width', '15');
+    bgRect.setAttribute('height', '15');
+    bgRect.setAttribute('fill', 'white');
+    mask.appendChild(bgRect);
+
+    // For knockout figures, force every stroke to black (so they punch a hole).
+    // Parts are `<g>` groups that may contain a path + arrowhead polygon.
+    const addKnockoutNode = (node: SVGElement) => {
+      const clone = node.cloneNode(true) as SVGElement;
+      clone.querySelectorAll('path').forEach((p) => p.setAttribute('stroke', 'black'));
+      mask.appendChild(clone);
+    };
+    for (const el of accumulatedErasers) addKnockoutNode(el);
+
+    defs.appendChild(mask);
+
+    const g = document.createElementNS(SVG_NS, 'g');
+    g.setAttribute('mask', `url(#knockout-${i})`);
+    g.setAttribute('clip-path', 'url(#workspace-clip)');
+    g.appendChild(p.el);
+    groups.push(g);
+  }
+
+  // `groups` was built top→down; reverse so the SVG paints bottom→top (matching
+  // original stack order: earlier z-index = lower = painted first).
+  groups.reverse();
+
+  // NOTE: `defs` (clipPath + knockout masks) MUST be attached to the SVG,
+  // otherwise the masks/clip never reach the DOM and erase does nothing.
+  svg.append(defs, ...groups);
 }

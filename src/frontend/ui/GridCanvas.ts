@@ -414,7 +414,7 @@ export class GridCanvas {
     else this.previewPath.removeAttribute('transform');
 
     // Arrowhead overlay on the draft preview.
-    const arrow = arrowheadPoints(draft.type, x1, y1, x2, y2, sw);
+    const arrow = arrowheadPoints(draft.type, x1, y1, x2, y2, sw, draft.radius ?? 0);
     if (arrow) {
       if (!this.arrowPath) {
         this.arrowPath = document.createElementNS(SVG_NS, 'polygon');
@@ -487,7 +487,7 @@ export class GridCanvas {
       this.previewPath.appendChild(p);
 
       // Arrowhead overlay.
-      const arrow = arrowheadPoints(fig.type, x1, y1, x2, y2, sw);
+      const arrow = arrowheadPoints(fig.type, x1, y1, x2, y2, sw, fig.radius ?? 0);
       if (arrow) {
         hasArrow = true;
         arrowPoints = arrow;

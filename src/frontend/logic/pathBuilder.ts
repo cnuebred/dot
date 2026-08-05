@@ -4,6 +4,7 @@
  * Shared by draft preview, move preview and highlight rendering so the
  * shape logic lives in ONE place (mirrors the backend `svgCompiler.ts`).
  */
+import { arcRadius } from '../../shared/toolEndings';
 
 /**
  * Returns the `d` attribute for a shape's bounding box.
@@ -50,8 +51,8 @@ export function buildPath(baseType: string, x1: number, y1: number, x2: number, 
     case 'k': // Arc (square)
     case 'n': // Arc (butt)
     case 'z': // Arc (arrowhead)
-      const r = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1), 1);
-      return `M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`;
+      const r = arcRadius(x1, y1, x2, y2, radius);
+      return `M ${x1} ${y1} A ${r.toFixed(2)} ${r.toFixed(2)} 0 0 1 ${x2} ${y2}`;
     default:
       return `M ${x1} ${y1} L ${x2} ${y2}`;
   }

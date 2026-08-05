@@ -1,5 +1,5 @@
 import { getColorByIndex, getPaletteId, getColorIndex } from '../shared/palette';
-import { getLineCap, hasArrowhead, arrowheadPoints, strokeWidth } from '../shared/toolEndings';
+import { getLineCap, hasArrowhead, arrowheadPoints, strokeWidth, arcRadius } from '../shared/toolEndings';
 import { decodeCoord } from '../shared/coords';
 
 export interface CompileOptions {
@@ -149,8 +149,8 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
       case 'k': // Arc (square cap)
       case 'n': // Arc (butt cap)
       case 'z': // Arc (arrowhead)
-        const r = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1), 1);
-        d = `M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`;
+        const r = arcRadius(x1, y1, x2, y2, radius);
+        d = `M ${x1} ${y1} A ${r.toFixed(2)} ${r.toFixed(2)} 0 0 1 ${x2} ${y2}`;
         break;
     }
 
@@ -171,13 +171,15 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
     // Arrowhead overlay (if the tool is an arrowhead variant).
     let arrowXml = '';
     if (hasArrowhead(type)) {
-      const pts = arrowheadPoints(type, x1, y1, x2, y2, sw);
+      const pts = arrowheadPoints(type, x1, y1, x2, y2, sw, radius);
       if (pts) {
         arrowXml = `<polygon points="${pts}" fill="${color}" stroke="none"${rotationAttr} />`;
       }
     }
 
-    const isKnockout = isV4 && opacity === 0;
+    // opacity === 0 → erase (knockout). Guarded by version only implicitly:
+    // v3 has no opacity (always 15), so this only triggers for v4+.
+    const isKnockout = opacity === 0;
 
     parts.push({
       zIndex,
@@ -200,22 +202,49 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
     ? `<rect width="${sizeWithPadding}" height="${sizeWithPadding}" fill="${options.faviconBackground}" />\n  `
     : '';
 
-  // If there are knockout figures, add a mask and wrap normal ones in a group.
+  // If there are knockout figures, mask each normal figure by the erasers ABOVE
+  // it in the render stack. The render order is the full sorted `parts` array
+  // (stable sort by z-index → equal z-index keeps insertion order). An eraser
+  // at index j erases only normal figures at indices < j. Figures drawn after
+  // an eraser (on top of it) stay untouched.
   let knockoutMask = '';
   let wrappedShapes = shapes;
   if (knockoutParts.length > 0) {
-    const maskId = 'knockout';
-    const knockoutPaths = knockoutParts.map(p => {
-      return p.xml
-        .replace(/stroke="[^"]*"/, 'stroke="black"')
-        .replace(/opacity="[^"]*"/, '');
-    }).join('\n    ');
-    knockoutMask = `
+    const sortedParts = [...parts].sort((a, b) => a.zIndex - b.zIndex);
+
+    const accumulatedErasers: string[] = [];
+    const groups: string[] = [];
+
+    // Walk from the TOP of the stack (last rendered) down to the bottom.
+    for (let i = sortedParts.length - 1; i >= 0; i--) {
+      const p = sortedParts[i]!;
+      if (p.isKnockout) {
+        accumulatedErasers.push(
+          p.xml
+            .replace(/stroke="[^"]*"/, 'stroke="black"')
+            .replace(/opacity="[^"]*"/, '')
+        );
+        continue;
+      }
+
+      // A normal figure: render plainly if nothing above erases it.
+      if (accumulatedErasers.length === 0) {
+        groups.push(`  <g clip-path="url(#workspace-clip)">\n  ${p.xml}\n  </g>`);
+        continue;
+      }
+
+      const maskId = `knockout-${i}`;
+      knockoutMask += `
     <mask id="${maskId}">
       <rect width="${sizeWithPadding}" height="${sizeWithPadding}" fill="white" />
-      ${knockoutPaths}
+      ${accumulatedErasers.join('\n    ')}
     </mask>`;
-    wrappedShapes = `  <g mask="url(#${maskId})" clip-path="url(#workspace-clip)">\n  ${shapes}\n  </g>`;
+      groups.push(`  <g mask="url(#${maskId})" clip-path="url(#workspace-clip)">\n  ${p.xml}\n  </g>`);
+    }
+
+    // groups was built top→down; reverse so the SVG paints bottom→top.
+    groups.reverse();
+    wrappedShapes = groups.join('\n');
   } else {
     wrappedShapes = `  <g clip-path="url(#workspace-clip)">\n  ${shapes}\n  </g>`;
   }

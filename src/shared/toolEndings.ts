@@ -45,6 +45,33 @@ export function strokeWidth(weight: number): number {
 }
 
 /**
+ * Effective radius of curvature for an arc figure (sharp ↔ flat).
+ *
+ * The `radius` field (0-15) is reused to control how "sharp" (deeply bent,
+ * close to a semicircle) vs "flat" (close to a straight line) the arc is:
+ *   - 0  → sharpest: keeps the legacy behavior `r = max(|dx|,|dy|,1)`, so old
+ *          payloads render exactly as before (backward compatible).
+ *   - 15 → flattest: the arc approaches a straight chord between the endpoints.
+ *
+ * Implementation uses sagitta (arc height) interpolation and recovers the
+ * radius via `R = (D²/4 + h²)/(2h)`, which is always ≥ D/2, so the SVG arc
+ * parameters stay valid (no auto-scaling) at any value.
+ */
+export function arcRadius(x1: number, y1: number, x2: number, y2: number, radiusField = 0): number {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const D = Math.hypot(dx, dy);
+  const rDefault = Math.max(Math.abs(dx), Math.abs(dy), 1);
+  const hDefault = rDefault - Math.sqrt(Math.max(rDefault * rDefault - (D / 2) ** 2, 0));
+  const t = Math.max(0, Math.min(15, radiusField)) / 15;
+  // Flat target: a tiny sagitta so the arc is nearly a straight line.
+  const hFlat = Math.max(D, 1) * 0.002;
+  const h = hDefault + (hFlat - hDefault) * t;
+  const r = (D * D / 4 + h * h) / (2 * h);
+  return r;
+}
+
+/**
  * Returns an SVG polygon `points` string for a filled arrowhead at the end of
  * the figure, or null when the type has no arrowhead.
  *
@@ -56,6 +83,7 @@ export function arrowheadPoints(
   type: string,
   x1: number, y1: number, x2: number, y2: number,
   lineW: number,
+  radiusField = 0,
 ): string | null {
   if (!hasArrowhead(type)) return null;
 
@@ -63,7 +91,7 @@ export function arrowheadPoints(
   let ux: number, uy: number;
   if (isArcEnding(type)) {
     // Tangent unit vector at the end point, then negate to point back along path.
-    const dir = arcEndTangent(x1, y1, x2, y2);
+    const dir = arcEndTangent(x1, y1, x2, y2, radiusField);
     ux = -dir.tx;
     uy = -dir.ty;
   } else {
@@ -91,8 +119,11 @@ export function arrowheadPoints(
  * Unit tangent at the end point (x2,y2) of the SVG arc
  * `M x1 y1 A r r 0 0 1 x2 y2` (sweep=1, y-down). Direction of travel.
  */
-function arcEndTangent(x1: number, y1: number, x2: number, y2: number): { tx: number; ty: number } {
-  const r = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1), 1);
+function arcEndTangent(
+  x1: number, y1: number, x2: number, y2: number,
+  radiusField = 0,
+): { tx: number; ty: number } {
+  const r = arcRadius(x1, y1, x2, y2, radiusField);
   const D = Math.hypot(x2 - x1, y2 - y1);
   const h = D > 0 ? Math.sqrt(Math.max(r * r - (D / 2) ** 2, 0)) : 0;
   const mx = (x1 + x2) / 2;

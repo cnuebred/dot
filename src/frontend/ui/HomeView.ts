@@ -1,3 +1,5 @@
+import { LoginPanel } from './LoginPanel';
+
 export class HomeView {
   render(): HTMLElement {
     const container = document.createElement('div');
@@ -41,7 +43,11 @@ export class HomeView {
 
     navLinks.append(btn, galleryBtn, docsBtn);
 
-    container.append(title, subtitle, navLinks);
+    // Login panel (GitHub OAuth).
+    const loginPanel = new LoginPanel();
+    const loginEl = loginPanel.render();
+
+    container.append(title, subtitle, navLinks, loginEl);
     return container;
   }
 }

@@ -141,3 +141,60 @@ export async function addGalleryEntry(payload: string, title: string): Promise<A
     return { success: true, entry };
   });
 }
+
+/** Renames a gallery entry by id. Returns the updated entry or an error. */
+export async function renameGalleryEntry(id: string, title: string): Promise<AddGalleryResult> {
+  return writeMutex.run(async () => {
+    const safeTitle = (typeof title === 'string' ? title : '').trim().slice(0, MAX_TITLE_LENGTH);
+    if (!safeTitle) return { success: false, error: 'Title is required' };
+
+    if (sqliteEnabled) {
+      const db = sqlite();
+      if (db) {
+        try {
+          const existing = db.query('SELECT * FROM gallery WHERE id = ?').get(id) as unknown as GalleryEntry | undefined;
+          if (!existing) return { success: false, error: 'Entry not found' };
+          db.query('UPDATE gallery SET title = ? WHERE id = ?').run(safeTitle, id);
+          return { success: true, entry: { ...existing, title: safeTitle } };
+        } catch (e) {
+          console.error('[Gallery] SQLite rename failed', e);
+          return { success: false, error: 'Failed to rename entry' };
+        }
+      }
+    }
+
+    await ensureLoaded();
+    const idx = cache.findIndex((e) => e.id === id);
+    if (idx < 0) return { success: false, error: 'Entry not found' };
+    cache[idx] = { ...cache[idx], title: safeTitle };
+    await persist();
+    return { success: true, entry: cache[idx] };
+  });
+}
+
+/** Deletes a gallery entry by id. */
+export async function deleteGalleryEntry(id: string): Promise<{ success: boolean; error?: string }> {
+  return writeMutex.run(async () => {
+    if (sqliteEnabled) {
+      const db = sqlite();
+      if (db) {
+        try {
+          const res = db.query('DELETE FROM gallery WHERE id = ?').run(id);
+          if (Number(res.changes) === 0) return { success: false, error: 'Entry not found' };
+          return { success: true };
+        } catch (e) {
+          console.error('[Gallery] SQLite delete failed', e);
+          return { success: false, error: 'Failed to delete entry' };
+        }
+      }
+    }
+
+    await ensureLoaded();
+    const idx = cache.findIndex((e) => e.id === id);
+    if (idx < 0) return { success: false, error: 'Entry not found' };
+    cache.splice(idx, 1);
+    await persist();
+    return { success: true };
+  });
+}
+
