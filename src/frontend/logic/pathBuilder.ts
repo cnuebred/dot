@@ -11,9 +11,10 @@ import { arcRadius } from '../../shared/toolEndings';
  * `baseType` should be the lower-cased tool type.
  * Line variants: l/s/b/v (round/square/butt/arrowhead) → line path.
  * Arc variants:  a/k/n/z (round/square/butt/arrowhead) → arc path.
- * `radius` (0-15) rounds the corners of rectangles (v6).
+ * `radius` (0-35) rounds the corners of rectangles (v6) and sets arc sagitta.
+ * `isFilled` closes arc paths with a chord so a filled arc forms a "pie slice".
  */
-export function buildPath(baseType: string, x1: number, y1: number, x2: number, y2: number, radius = 0): string {
+export function buildPath(baseType: string, x1: number, y1: number, x2: number, y2: number, radius = 0, isFilled = false): string {
   switch (baseType) {
     case 'l': // Line (round)
     case 's': // Line (square)
@@ -52,7 +53,10 @@ export function buildPath(baseType: string, x1: number, y1: number, x2: number, 
     case 'n': // Arc (butt)
     case 'z': // Arc (arrowhead)
       const r = arcRadius(x1, y1, x2, y2, radius);
-      return `M ${x1} ${y1} A ${r.toFixed(2)} ${r.toFixed(2)} 0 0 1 ${x2} ${y2}`;
+      // Filled arc closes back to its start point (chord) → "pie slice".
+      return isFilled
+        ? `M ${x1} ${y1} A ${r.toFixed(2)} ${r.toFixed(2)} 0 0 1 ${x2} ${y2} Z`
+        : `M ${x1} ${y1} A ${r.toFixed(2)} ${r.toFixed(2)} 0 0 1 ${x2} ${y2}`;
     default:
       return `M ${x1} ${y1} L ${x2} ${y2}`;
   }

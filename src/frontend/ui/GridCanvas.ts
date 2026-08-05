@@ -416,7 +416,7 @@ export class GridCanvas {
     const strokeWidthStr = sw.toFixed(1);
     const lineCap = getLineCap(draft.type);
 
-    const d = buildPath(baseType, x1, y1, x2, y2, draft.radius ?? 0);
+    const d = buildPath(baseType, x1, y1, x2, y2, draft.radius ?? 0, isFilled);
     const isErase = draft.opacity === 0;
 
     this.previewPath.setAttribute('d', d);
@@ -488,7 +488,7 @@ export class GridCanvas {
       const lineCap = getLineCap(fig.type);
       const isErase = fig.opacity === 0;
 
-      const d = buildPath(baseType, x1, y1, x2, y2, fig.radius ?? 0);
+      const d = buildPath(baseType, x1, y1, x2, y2, fig.radius ?? 0, isFilled);
       const transform = rotationTransform(rotation, x1, y1, x2, y2);
 
       // Build a sub-path with its own stroke/fill via a <path> per figure is complex;
@@ -686,9 +686,10 @@ export class GridCanvas {
   private renderHighlight(fig: Figure) {
     const x1 = fig.x1, y1 = fig.y1, x2 = fig.p1, y2 = fig.p2;
     const baseType = fig.type.toLowerCase();
+    const isFilled = fig.type !== 'l' && fig.type === fig.type.toUpperCase();
     const rotation = (fig.rotation ?? 0) * 10;
 
-    this.highlightPath.setAttribute('d', buildPath(baseType, x1, y1, x2, y2, fig.radius ?? 0));
+    this.highlightPath.setAttribute('d', buildPath(baseType, x1, y1, x2, y2, fig.radius ?? 0, isFilled));
     this.highlightPath.setAttribute('stroke-opacity', '0.8');
     const transform = rotationTransform(rotation, x1, y1, x2, y2);
     if (transform) this.highlightPath.setAttribute('transform', transform);

@@ -174,7 +174,10 @@ export function compileToSvg(text: string, options: CompileOptions = {}): string
       case 'n': // Arc (butt cap)
       case 'z': // Arc (arrowhead)
         const r = arcRadius(x1, y1, x2, y2, radius);
-        d = `M ${x1} ${y1} A ${r.toFixed(2)} ${r.toFixed(2)} 0 0 1 ${x2} ${y2}`;
+        // Filled arc closes back to its start point (chord) → "pie slice".
+        d = isFilled
+          ? `M ${x1} ${y1} A ${r.toFixed(2)} ${r.toFixed(2)} 0 0 1 ${x2} ${y2} Z`
+          : `M ${x1} ${y1} A ${r.toFixed(2)} ${r.toFixed(2)} 0 0 1 ${x2} ${y2}`;
         break;
     }
 

@@ -39,7 +39,7 @@ export function renderCommittedSvg(svg: SVGSVGElement, figures: Figure[]): void 
     const lineCap = getLineCap(fig.type);
 
     const path = document.createElementNS(SVG_NS, 'path') as SVGPathElement;
-    path.setAttribute('d', buildPath(baseType, x1, y1, x2, y2, fig.radius ?? 0));
+    path.setAttribute('d', buildPath(baseType, x1, y1, x2, y2, fig.radius ?? 0, isFilled));
     path.setAttribute('stroke', isFilled ? 'none' : color);
     path.setAttribute('fill', isFilled ? color : 'none');
     path.setAttribute('stroke-width', strokeWidthStr);
@@ -188,7 +188,7 @@ export function renderCommittedSvgString(): string {
     const lineCap = getLineCap(fig.type);
     const isKnockout = (fig.opacity ?? 35) === 0;
 
-    const d = buildPath(baseType, x1, y1, x2, y2, fig.radius ?? 0);
+    const d = buildPath(baseType, x1, y1, x2, y2, fig.radius ?? 0, isFilled);
     const transform = rotationTransform(rotation, x1, y1, x2, y2);
     const transformAttr = transform ? ` transform="${transform}"` : '';
 

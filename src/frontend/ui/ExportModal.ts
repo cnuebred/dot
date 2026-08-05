@@ -194,6 +194,21 @@ export class ExportModal {
       setTimeout(() => (copyFaviconIcoBtn.textContent = 'Copy Favicon ICO URL'), 2000);
     };
 
+    // Copy HTML <img> tag – lets you drop the icon into a button/link/etc.
+    const copyHtmlTagBtn = document.createElement('button');
+    copyHtmlTagBtn.className = 'btn-primary';
+    copyHtmlTagBtn.textContent = 'Copy HTML <img> Tag';
+    copyHtmlTagBtn.title = 'Copy an <img> tag you can paste into HTML (e.g. as a button icon)';
+    copyHtmlTagBtn.onclick = () => {
+      // Stateless → hotlink URL; client-only → inline data-URI.
+      const src = stateless ? url : 'data:image/svg+xml;utf8,' + encodeURIComponent(renderCommittedSvgString());
+      const size = stateManager.maxCoord + 1;
+      const tag = `<img src="${src}" alt="icon" width="${size}" height="${size}">`;
+      copyText(tag);
+      copyHtmlTagBtn.textContent = 'Copied!';
+      setTimeout(() => (copyHtmlTagBtn.textContent = 'Copy HTML <img> Tag'), 2000);
+    };
+
     // Sekcja RAW (nieskompresowany link)
     const rawSection = document.createElement('div');
     rawSection.style.marginTop = '1rem';
@@ -250,7 +265,7 @@ export class ExportModal {
       setTimeout(() => (publishBtn.textContent = 'Publish to Gallery'), 3000);
     };
 
-    actions.append(copyUrlBtn, copySvgBtn, downloadBtn, downloadPngBtn, copyFaviconSvgBtn, copyFaviconIcoBtn, publishBtn, rawSection);
+    actions.append(copyUrlBtn, copySvgBtn, downloadBtn, downloadPngBtn, copyFaviconSvgBtn, copyFaviconIcoBtn, copyHtmlTagBtn, publishBtn, rawSection);
 
     const closeBtn = document.createElement('button');
     closeBtn.className = 'btn-delete';
