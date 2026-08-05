@@ -73,9 +73,9 @@ export class StateManager {
 
   /**
    * Canvas size in points (max coordinate). Supported values:
-   *  - 15  → 16×16 point canvas (default, stateless / shareable)
-   *  - 63  → 64×64 point canvas (client-only – hotlink/export disabled)
-   *  - 127 → 128×128 point canvas (client-only – hotlink/export disabled)
+   *  - 7..31 → 8×8..32×32 point canvases (stateless / shareable)
+   *  - 63    → 64×64 point canvas (client-only – hotlink/export disabled)
+   *  - 127   → 128×128 point canvas (client-only – hotlink/export disabled)
    * Larger canvases are client-side only because their state cannot be
    * encoded into the URL / backend without blowing the payload limits.
    */
@@ -253,19 +253,24 @@ export class StateManager {
 
   /**
    * The supported canvas sizes (max coordinate values).
+   * Every size from 8×8 to 32×32 (maxCoord 7..31) is stateless — it fits the
+   * base-36 coordinate range (0-35). 64×64 and 128×128 exceed it → client-only.
    */
-  static readonly CANVAS_SIZES: ReadonlyArray<{ label: string; maxCoord: number; stateless: boolean }> = [
-    { label: '16×16', maxCoord: 15, stateless: true },
-    { label: '32×32', maxCoord: 31, stateless: true },
-    { label: '64×64', maxCoord: 63, stateless: false },
-    { label: '128×128', maxCoord: 127, stateless: false },
-  ];
+  static readonly CANVAS_SIZES: ReadonlyArray<{ label: string; maxCoord: number; stateless: boolean }> = (() => {
+    const sizes: { label: string; maxCoord: number; stateless: boolean }[] = [];
+    for (let n = 8; n <= 32; n++) {
+      sizes.push({ label: `${n}×${n}`, maxCoord: n - 1, stateless: true });
+    }
+    sizes.push({ label: '64×64', maxCoord: 63, stateless: false });
+    sizes.push({ label: '128×128', maxCoord: 127, stateless: false });
+    return sizes;
+  })();
 
   /** Whether the current canvas can be shared via stateless URL/backend. */
   isStateless(): boolean {
-    // 16×16 and 32×32 fit within the base-36 coord range (0-35), so they can
-    // be encoded into the stateless URL. 64/128 exceed it → client-only.
-    return this.canvasSize === 15 || this.canvasSize === 31;
+    // Sizes 8×8..32×32 (maxCoord 7..31) fit within the base-36 coord range
+    // (0-35), so they can be encoded into the stateless URL. 64/128 exceed it.
+    return this.canvasSize <= 31;
   }
 
   /**
